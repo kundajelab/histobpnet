@@ -232,3 +232,85 @@ class BPNet(torch.nn.Module):
             pred_count = torch.cat([pred_count, torch.log1p(x_ctl)], dim=-1)
         pred_count = self.linear(pred_count)
         return pred_count
+
+    @classmethod
+    def from_keras(cls, filename, name='chrombpnet'):
+        """Loads a model from ChromBPNet TensorFlow format.
+    
+        This method will load one of the components of a ChromBPNet model
+        from TensorFlow format. Note that a full ChromBPNet model is made up
+        of an accessibility model and a bias model and that this will load
+        one of the two. Use `ChromBPNet.from_chrombpnet` to end up with the
+        entire ChromBPNet model.
+
+        Parameters
+        ----------
+        filename: str
+            The name of the h5 file that stores the trained model parameters.
+
+        Returns
+        -------
+        model: BPNet
+            A BPNet model compatible with this repository in PyTorch.
+        """
+        if filename.endswith('.h5'):
+            import h5py
+
+            h5 = h5py.File(filename, "r")
+            w = h5['model_weights']
+        else:
+            import os
+            os.system('conda activate chrombpnet')
+            import tensorflow as tf
+            model = tf.keras.models.load_model(filename)
+            w = model.get_weights()
+            os.system('conda deactivate')
+
+        if 'bpnet_1conv' in w.keys():
+            prefix = ""
+        else:
+            prefix = "wo_bias_"
+        # print(f"Loading {name} model from {filename}", flush=True)
+
+        namer = lambda prefix, suffix: '{0}{1}/{0}{1}'.format(prefix, suffix)
+        k, b = 'kernel:0', 'bias:0'
+
+        n_layers = 0
+        for layer_name in w.keys():
+            try:
+                idx = int(layer_name.split("_")[-1].replace("conv", ""))
+                n_layers = max(n_layers, idx)
+            except:
+                pass
+
+        name = namer(prefix, "bpnet_1conv")
+        n_filters = w[name][k].shape[2]
+
+        model = BPNet(n_layers=n_layers, n_filters=n_filters, n_outputs=1,
+            n_control_tracks=0)
+
+        convert_w = lambda x: torch.nn.Parameter(torch.tensor(
+            x[:]).permute(2, 1, 0))
+        convert_b = lambda x: torch.nn.Parameter(torch.tensor(x[:]))
+
+        iname = namer(prefix, 'bpnet_1st_conv')
+
+        model.iconv.weight = convert_w(w[iname][k])
+        model.iconv.bias = convert_b(w[iname][b])
+
+        for i in range(1, n_layers+1):
+            lname = namer(prefix, 'bpnet_{}conv'.format(i))
+
+            model.rconvs[i-1].weight = convert_w(w[lname][k])
+            model.rconvs[i-1].bias = convert_b(w[lname][b])
+
+        prefix = prefix + "bpnet_" if prefix != "" else ""
+
+        fname = namer(prefix, 'prof_out_precrop')
+        model.fconv.weight = convert_w(w[fname][k])
+        model.fconv.bias = convert_b(w[fname][b])
+
+        name = namer(prefix, "logcount_predictions")
+        model.linear.weight = torch.nn.Parameter(torch.tensor(w[name][k][:].T))
+        model.linear.bias = convert_b(w[name][b])
+        return model

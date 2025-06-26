@@ -368,12 +368,10 @@ def run_modisco_and_shap(
         meme_file
     ))
 
-
     html_to_pdf(
         os.path.join(out_dir, 'modisco_report/motifs.html'),
         os.path.join(out_dir, 'modisco_report.pdf')
     )
-
 
 def generate_shap_dict(seqs, scores):
     if isinstance(seqs, torch.Tensor):
@@ -394,11 +392,6 @@ def generate_shap_dict(seqs, scores):
         }
 
     return d
-
-
-
-     
-
 
 if __name__ == '__main__':
     import argparse

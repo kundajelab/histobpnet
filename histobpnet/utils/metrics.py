@@ -5,22 +5,14 @@ from scipy.stats import spearmanr, pearsonr
 from scipy.spatial.distance import jensenshannon
 import matplotlib
 from matplotlib import pyplot as plt
-from .metrics_utils import * 
-from .data_utils import write_bigwig, read_chrom_sizes
+import os
+import json
+# from .metrics_utils import * 
 
 plt.rcParams["figure.figsize"]=10,5
 font = {'weight' : 'bold',
         'size'   : 10}
 matplotlib.rc('font', **font)
-
-import os
-import h5py
-import pandas as pd
-import json
-
-def softmax(x, temp=1):
-    norm_x = x - np.mean(x,axis=1, keepdims=True)
-    return np.exp(temp*norm_x)/np.sum(np.exp(temp*norm_x), axis=1, keepdims=True)
 
 def get_regions(regions, seqlen, regions_used=None):
     # regions file is assumed to be centered at summit (2nd + 10th column)
@@ -41,6 +33,8 @@ def get_regions(regions, seqlen, regions_used=None):
     return regions
 
 def write_predictions_h5py(profile, logcts, coords, out_dir='.'):
+    import h5py
+
     # open h5 file for writing predictions
     os.makedirs(out_dir, exist_ok=True)
     output_h5_fname = os.path.join(out_dir, "predictions.h5")
@@ -78,65 +72,11 @@ def write_predictions_h5py(profile, logcts, coords, out_dir='.'):
     # close hdf5 file
     h5_file.close()
 
-def save_predictions(output, regions, chrom_sizes=os.path.expanduser('~/.cache/regnet/hg38.chrom.sizes'), out_dir='./'):
-    """
-    Save the predictions to an HDF5 file and write regions to a CSV file.
-    """
-    os.makedirs(out_dir, exist_ok=True)
-    # chrom_sizes = os.path.expanduser('~/.cache/regnet/hg38.chrom.sizes')
-    gs = read_chrom_sizes(chrom_sizes)
-
-    seqlen = 1000
-    regions_array = [[x[0], int(x[1])+int(x[9])-seqlen//2, int(x[1])+int(x[9])+seqlen//2, int(x[1])+int(x[9])] for x in np.array(regions.values)]
-
+def compare_with_observed(output, regions, out_dir: str = './'):
+    os.makedirs(out_dir, exist_ok=False)
     # parse output
     parsed_output = {key: np.concatenate([batch[key] for batch in output]) for key in output[0]}
 
-    data = softmax(parsed_output['pred_profile']) * (np.expand_dims(np.exp(parsed_output['pred_count']), axis=1))
-
-    write_bigwig(
-        data,
-        regions_array,
-        gs,
-        os.path.join(out_dir, "pred.bw"),
-        outstats_file=None,
-        debug_chr=None,
-        use_tqdm=True)
-
-    # save predictions into h5py file
-    # write_predictions_h5py(parsed_output['pred_profile'], parsed_output['pred_count'], regions_array, out_dir)
-
-    return
-
-def compare_with_observed(output, regions, out_dir='./'):
-    """
-    """
-    os.makedirs(out_dir, exist_ok=True)
-    # chrom_sizes = os.path.expanduser('~/.cache/regnet/hg38.chrom.sizes')
-    # gs = bigwig_helper.read_chrom_sizes(chrom_sizes) #list(chrom_sizes.items())
-
-    # #gs = bigwig_helper.read_chrom_sizes(chrom_sizes)
-    # seqlen = 1000
-    # regions_array = [[x[0], int(x[1])+int(x[9])-seqlen//2, int(x[1])+int(x[9])+seqlen//2, int(x[1])+int(x[9])] for x in np.array(regions.values)]
-    
-    # # parse output
-    parsed_output = {key: np.concatenate([batch[key] for batch in output]) for key in output[0]}
-
-    # data = softmax(parsed_output['pred_profile']) * (np.expand_dims(np.exp(parsed_output['pred_count']),axis=1))
-
-    # bigwig_helper.write_bigwig(
-    #                     data, 
-    #                     regions_array, 
-    #                     gs, 
-    #                     os.path.join(out_dir, "pred.bw"), 
-    #                     outstats_file=None, 
-    #                     debug_chr=None, 
-    #                     use_tqdm=True)
-
-    # save predictions into h5py file
-    # write_predictions_h5py(parsed_output['pred_profile_prob'], parsed_output['true_profile'], coords, out_dir)
-
-    # regions = pd.DataFrame(coords, columns=['chrom', 'summit', 'forward_reverse', 'is_peak'])
     regions['is_peak'] = regions['is_peak'].astype(int)
     regions['pred_count'] = parsed_output['pred_count']
     regions['true_count'] = parsed_output['true_count']
@@ -162,7 +102,6 @@ def compare_with_observed(output, regions, out_dir='./'):
     metrics_dictionary["profile_metrics"]["peaks_and_nonpeaks"]["median_jsd"] = np.nanmedian(jsd_pw)        
     metrics_dictionary["profile_metrics"]["peaks_and_nonpeaks"]["median_norm_jsd"] = np.nanmedian(jsd_norm)
     
-
     spearman_cor, pearson_cor, mse = counts_metrics(peak_regions['true_count'], peak_regions['pred_count'], os.path.join(out_dir, 'peaks'))
     metrics_dictionary["counts_metrics"]["peaks"] = {}
     metrics_dictionary["counts_metrics"]["peaks"]["spearmanr"] = spearman_cor

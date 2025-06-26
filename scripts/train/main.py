@@ -31,12 +31,11 @@ from histobpnet.utils.general_utils import get_instance_id, set_random_seed
 # Set random seed for reproducibility. does this have to be before the imports below? :hmm:
 set_random_seed(seed = 42)
 
-from histobpnet.model import BPNet, ChromBPNet
 from histobpnet.model.model_config import ChromBPNetConfig
 from histobpnet.model.model_wrappers import create_model_wrapper, load_pretrained_model, adjust_bias_model_logcounts
 from histobpnet.data_loader.dataset import DataModule
 from histobpnet.data_loader.data_config import DataConfig, DATA_DIR
-from histobpnet.utils.metrics import compare_with_observed, save_predictions
+from histobpnet.utils.metrics import compare_with_observed
 from histobpnet.interpert.interpret import run_modisco_and_shap 
 from histobpnet.logging.logger import create_logger
 
@@ -134,6 +133,7 @@ def train(args):
 
     datamodule = DataModule(data_config)
 
+    # what is this for? -> loss weighting, see model_wrappers.py
     args.alpha = datamodule.median_count / 10
     log.info(f'alpha: {args.alpha}')
 
@@ -141,7 +141,7 @@ def train(args):
     if args.adjust_bias:
         adjust_bias_model_logcounts(model.model.bias, datamodule.negative_dataloader())
 
-    loggers=[L.pytorch.loggers.CSVLogger(args.out_dir, name=args.model_type, version=f'fold_{args.fold}')]
+    loggers = [L.pytorch.loggers.CSVLogger(args.out_dir, name=args.model_type, version=f'fold_{args.fold}')]
 
     trainer = L.Trainer(
         max_epochs=args.max_epochs,
@@ -155,10 +155,9 @@ def train(args):
             L.pytorch.callbacks.EarlyStopping(monitor='val_loss', patience=5),
             L.pytorch.callbacks.ModelCheckpoint(monitor='val_loss', save_top_k=1, mode='min', filename='best_model', save_last=True),
         ],
-        logger=loggers, # L.pytorch.loggers.TensorBoardLogger
+        logger=loggers,
         fast_dev_run=args.fast_dev_run,
         precision=args.precision,
-        # precision="bf16"
     )
     trainer.fit(model, datamodule)
     if args.model_type == 'chrombpnet' and not args.fast_dev_run:
@@ -168,7 +167,6 @@ def load_model(args):
     if args.checkpoint is None:
         checkpoint = os.path.join(args.out_dir, 'checkpoints/best_model.ckpt')
         if not os.path.exists(checkpoint):
-            args.checkpoint = None
             print(f'No checkpoint found in {args.out_dir}/checkpoints/best_model.ckpt')
         else:
             args.checkpoint = checkpoint
@@ -176,6 +174,7 @@ def load_model(args):
     model = load_pretrained_model(args)
     return model
 
+# TODO review
 def predict(args, model, datamodule=None):
     trainer = L.Trainer(logger=False, fast_dev_run=args.fast_dev_run, devices=args.gpu, val_check_interval=None) 
     log = create_logger(args.model_type, ch=True, fh=os.path.join(args.out_dir, f'predict.log'), overwrite=True)
@@ -191,17 +190,14 @@ def predict(args, model, datamodule=None):
     for chrom in chroms:
         dataloader, dataset = dm.chrom_dataloader(chrom)
         regions = dataset.regions
-        log.info(f"{chrom}: {regions['is_peak'].value_counts()}")
-        model_metrics = compare_with_observed(trainer.predict(model, dataloader), regions, os.path.join(args.out_dir, 'evaluation', chrom))    
+        log.info(f"Distribution of peaks/negatives for {chrom}: {regions['is_peak'].value_counts()}")
+        compare_with_observed(trainer.predict(model, dataloader), regions, os.path.join(args.out_dir, 'evaluation', chrom))    
 
-    return dm
-
+# TODO review
 def interpret(args, model, datamodule=None):
     if datamodule is None:
         data_config = DataConfig.from_argparse_args(args)
         datamodule = DataModule(data_config)
-    dataloader, dataset = datamodule.chrom_dataloader(args.chrom)
-    regions = dataset.regions
     model.to(f'cuda:{args.gpu[0]}')
 
     tasks = ['profile', 'counts'] if args.shap == 'both' else [args.shap]
@@ -232,7 +228,7 @@ def main():
     if args.command == 'train':
         train(args)
         model = load_model(args)
-        predict(args, model, None)
+        predict(args, model)
     elif args.command == 'predict':
         model = load_model(args)
         predict(args, model)

@@ -6,7 +6,7 @@ import logging
 
 # TODO update logger
 
-def create_logger(name='', ch=True, fh=False, levelname=logging.INFO, overwrite=False):
+def create_logger(name='', ch=True, fh: str = None, levelname=logging.INFO, overwrite=False):
     logger = logging.getLogger(name)
     logger.setLevel(levelname)
     
@@ -21,7 +21,7 @@ def create_logger(name='', ch=True, fh=False, levelname=logging.INFO, overwrite=
         ch.setLevel(logging.INFO)
         ch.setFormatter(formatter)
         logger.addHandler(ch)
-    if fh:
+    if fh is not None:
         fh = logging.FileHandler(fh, mode='w')
         fh.setLevel(logging.DEBUG)
         fh.setFormatter(formatter)

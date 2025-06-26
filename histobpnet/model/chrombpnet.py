@@ -18,9 +18,6 @@ class _Log(nn.Module):
     def forward(self, X):
         return torch.log(X)
 
-def _to_numpy(tensor):
-    return tensor.detach().cpu().numpy()
-
 # adapt from BPNet in bpnet-lite, credit goes to Jacob Schreiber <jmschreiber91@gmail.com>
 class ChromBPNet(nn.Module):
     """A ChromBPNet model.

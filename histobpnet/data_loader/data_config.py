@@ -20,7 +20,7 @@ DATA_DIR = '/oak/stanford/groups/akundaje/leixiong/data/atac/K562'
 MEME_FILE = '/oak/stanford/groups/akundaje/leixiong/genomemotifs/motifs.meme.txt'
 HG38_FASTA = os.path.join(HG38_GENOME_DIR, 'hg38.fa')
 HG38_CHROM_SIZES = os.path.join(HG38_GENOME_DIR, 'hg38.chrom.sizes')
-
+    
 @dataclass
 class DataConfig:
     """Base configuration class for data handling.
@@ -52,7 +52,7 @@ class DataConfig:
         rc: float = 0.5,
         outlier_threshold: float = 0.999,
         data_type: str = 'profile',
-        # TODO no mutable defaults
+        # TODO no mutable defaults, make those constants
         training_chroms: List = [
             "chr2", "chr4", "chr5", "chr7", "chr9", "chr10", "chr11", "chr12", "chr13", "chr14",
             "chr15", "chr16", "chr17", "chr18", "chr19", "chr21", "chr22", "chrX", "chrY"],
@@ -65,7 +65,6 @@ class DataConfig:
         debug: bool = False,
         **kwargs,
     ):
-
         self.data_dir = data_dir
         self.peaks = peaks.format(data_dir)
         self.negatives = negatives.format(data_dir)
@@ -93,7 +92,6 @@ class DataConfig:
         self.batch_size = batch_size    
         self.num_workers = num_workers
         self.debug = debug
-        # TODO look at this
         splits_dict = json.load(open(os.path.join(fold_dir, f'fold_{fold}.json')))
         self.training_chroms = splits_dict['train'] if training_chroms is None else training_chroms
         self.validation_chroms = splits_dict['valid'] if validation_chroms is None else validation_chroms

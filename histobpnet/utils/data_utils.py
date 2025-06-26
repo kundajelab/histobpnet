@@ -37,7 +37,6 @@ def dna_to_one_hot(seqs):
     # Get the one-hot encoding for those indices, and reshape back to separate
     return one_hot_map[base_inds[:-4]].reshape((len(seqs), seq_len, 4))
 
-
 def one_hot_to_dna(one_hot):
     """
     Converts a one-hot encoding into a list of DNA ("ACGT") sequences, where the
@@ -61,7 +60,6 @@ def one_hot_to_dna(one_hot):
     seq_array = bases[one_hot_inds]
     return ["".join(seq) for seq in seq_array]
 
-
 # https://stackoverflow.com/questions/46091111/python-slice-array-at-different-position-on-every-row
 def take_per_row(A, indx, num_elem):
     """
@@ -72,26 +70,22 @@ def take_per_row(A, indx, num_elem):
     all_indx = indx[:,None] + np.arange(num_elem)
     return A[np.arange(all_indx.shape[0])[:,None], all_indx]
 
-
 def random_crop(seqs, labels, seq_crop_width, label_crop_width, coords):
     """
     Takes sequences and corresponding counts labels. They should have the same
-    #examples. The widths would correspond to inputlen and outputlen respectively,
+    # of examples. The widths would correspond to inputlen and outputlen respectively,
     and any additional flanking width for jittering which should be the same
     for seqs and labels. Each example is cropped starting at a random offset. 
 
     seq_crop_width - label_crop_width should be equal to seqs width - labels width,
     essentially implying they should have the same flanking width.
     """
-
-    assert(seqs.shape[1]>=seq_crop_width)
-    assert(labels.shape[1]>=label_crop_width)
+    assert(seqs.shape[1] >= seq_crop_width)
+    assert(labels.shape[1] >= label_crop_width)
     assert(seqs.shape[1] - seq_crop_width == labels.shape[1] - label_crop_width)
 
     max_start = seqs.shape[1] - seq_crop_width # This should be the same for both input and output
-
     starts = np.random.choice(range(max_start+1), size=seqs.shape[0], replace=True)
-
     new_coords = coords.copy()
     new_coords[:,1] = new_coords[:,1].astype(int) - (seqs.shape[1]//2) + starts
 
@@ -106,35 +100,28 @@ def random_rev_comp(seqs, labels, coords, frac=0.5):
 
     NOTE: Performs in-place modification.
     """
-    
-    pos_to_rc = np.random.choice(range(seqs.shape[0]), 
-            size=int(seqs.shape[0]*frac),
-            replace=False)
-
+    pos_to_rc = np.random.choice(range(seqs.shape[0]), size=int(seqs.shape[0]*frac), replace=False)
     seqs[pos_to_rc] = seqs[pos_to_rc, ::-1, ::-1]
     labels[pos_to_rc] = labels[pos_to_rc, ::-1]
     coords[pos_to_rc,2] =  "r"
 	
     return seqs, labels, coords
 
-def crop_revcomp_augment(seqs, labels, coords, seq_crop_width, label_crop_width, add_revcomp, rc_frac=0.5, shuffle=False):
+def crop_revcomp_augment(seqs, labels, coords, add_revcomp, rc_frac=0.5, shuffle=False):
     """
     seqs: B x IL x 4
     labels: B x OL
 
     Applies random crop to seqs and labels and reverse complements rc_frac. 
     """
-
     assert(seqs.shape[0]==labels.shape[0])
 
     # this does not modify seqs and labels
-    #mod_seqs, mod_labels, mod_coords = random_crop(seqs, labels, seq_crop_width, label_crop_width, coords)
     mod_seqs, mod_labels, mod_coords = seqs, labels, coords
 
     # this modifies mod_seqs, mod_labels in-place
     if add_revcomp:
         mod_seqs, mod_labels, mod_coords = random_rev_comp(mod_seqs, mod_labels, mod_coords, frac=rc_frac)
-
 
     if shuffle:
         perm = np.random.permutation(mod_seqs.shape[0])
@@ -142,9 +129,7 @@ def crop_revcomp_augment(seqs, labels, coords, seq_crop_width, label_crop_width,
         mod_labels = mod_labels[perm]
         mod_coords = mod_coords[perm]
 
-
     return mod_seqs, mod_labels, mod_coords
-
 
 def read_chrom_sizes(fname):
     with open(fname) as f:
@@ -153,13 +138,11 @@ def read_chrom_sizes(fname):
 
     return gs
 
-
 def format_region(df, width=500):
     df.loc[:, 'start'] = df.loc[:, 'start'].astype(np.int64) + df.loc[:, 'summit'] - width // 2
     df.loc[:, 'end'] = df.loc[:, 'start'] + width 
     df.loc[:, 'summit'] = width // 2
     return df
-
 
 def expand_3col_to_10col(df):
     if df.shape[1] != 3:
@@ -174,7 +157,6 @@ def expand_3col_to_10col(df):
     df['end'] = df['end'].astype(int)
     df['summit'] = df['summit'].astype(int)
     return df
-
 
 def load_region_df(peak_bed, chrom_sizes=None, in_window=2114, shift=0, width=500, is_peak=True):
     """
@@ -194,7 +176,6 @@ def load_region_df(peak_bed, chrom_sizes=None, in_window=2114, shift=0, width=50
     else:
         if not os.path.exists(peak_bed) and os.path.exists(peak_bed+'.gz'):
             peak_bed = peak_bed+'.gz'
-
         df = pd.read_csv(peak_bed, sep='\t', header=None)
 
     if isinstance(chrom_sizes, str):
@@ -221,19 +202,16 @@ def load_region_df(peak_bed, chrom_sizes=None, in_window=2114, shift=0, width=50
     filtered_df = format_region(filtered_df, width=500)
     return filtered_df.reset_index(drop=True) # Reset index to avoid index errors
 
-
 def get_seq(peaks_df, genome, width):
     """
     Same as get_cts, but fetches sequence from a given genome.
     """
     vals = []
-
     for i, r in peaks_df.iterrows():
         sequence = str(genome[r['chr']][(r['start']+r['summit'] - width//2):(r['start'] + r['summit'] + width//2)])
         vals.append(sequence)
 
     return dna_to_one_hot(vals)
-
 
 def get_cts(peaks_df, bw, width):
     """
@@ -263,7 +241,6 @@ def get_coords(peaks_df, peaks_bool):
     return np.array(vals)
 
 def get_seq_cts_coords(peaks_df, genome, bw, input_width, output_width, peaks_bool):
-
     seq = get_seq(peaks_df, genome, input_width)
     cts = get_cts(peaks_df, bw, output_width)
     coords = get_coords(peaks_df, peaks_bool)
@@ -278,10 +255,7 @@ def load_data(bed_regions, nonpeak_regions, genome_fasta, cts_bw_file, inputlen,
     are returned centered at peak summit. This allows for jittering examples by randomly
     cropping. Data of width inputlen/outputlen is returned for validation
     data.
-
-    If outliers is not None, removes training examples with counts > outlier%ile
     """
-
     cts_bw = pyBigWig.open(cts_bw_file)
     genome = pyfaidx.Fasta(genome_fasta)
 
@@ -296,30 +270,27 @@ def load_data(bed_regions, nonpeak_regions, genome_fasta, cts_bw_file, inputlen,
         if not set(['chr', 'start', 'summit']).issubset(bed_regions.columns):
             bed_regions = expand_3col_to_10col(bed_regions)
         train_peaks_seqs, train_peaks_cts, train_peaks_coords = get_seq_cts_coords(bed_regions,
-                                            genome,
-                                            cts_bw,
-                                            inputlen+2*max_jitter,
-                                            outputlen+2*max_jitter,
-                                            peaks_bool=1)
+                                                                                   genome,
+                                                                                   cts_bw,
+                                                                                   inputlen+2*max_jitter,
+                                                                                   outputlen+2*max_jitter,
+                                                                                   peaks_bool=1)
     
     if nonpeak_regions is not None:
         if not set(['chr', 'start', 'summit']).issubset(nonpeak_regions.columns):
             nonpeak_regions = expand_3col_to_10col(nonpeak_regions)
         train_nonpeaks_seqs, train_nonpeaks_cts, train_nonpeaks_coords = get_seq_cts_coords(nonpeak_regions,
-                                            genome,
-                                            cts_bw,
-                                            inputlen,
-                                            outputlen,
-                                            peaks_bool=0)
-
-
+                                                                                            genome,
+                                                                                            cts_bw,
+                                                                                            inputlen,
+                                                                                            outputlen,
+                                                                                            peaks_bool=0)
 
     cts_bw.close()
     genome.close()
 
     return (train_peaks_seqs, train_peaks_cts, train_peaks_coords,
             train_nonpeaks_seqs, train_nonpeaks_cts, train_nonpeaks_coords)
-
 
 def write_bigwig(data, regions, gs, bw_out, debug_chr=None, use_tqdm=False, outstats_file=None):
     # regions may overlap but as we go in sorted order, at a given position,
@@ -400,9 +371,7 @@ def write_bigwig(data, regions, gs, bw_out, debug_chr=None, use_tqdm=False, outs
             f.write("99.99%\t{:.6f}\n".format(np.quantile(all_entries, 0.9999)))
             f.write("Max\t{:.6f}\n".format(np.max(all_entries)))
 
-
 def hdf5_to_bigwig(hdf5, regions, chrom_sizes, output_prefix, output_prefix_stats=None, debug_chr=None, tqdm=False):
-
     d = deepdish.io.load(hdf5, '/projected_shap/seq')
 
     SEQLEN = d.shape[2]
@@ -423,7 +392,6 @@ def hdf5_to_bigwig(hdf5, regions, chrom_sizes, output_prefix, output_prefix_stat
                         outstats_file=output_prefix_stats, 
                         debug_chr=debug_chr, 
                         use_tqdm=tqdm)
-    
 
 from weasyprint import HTML, CSS
 

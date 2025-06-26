@@ -147,12 +147,12 @@ def get_min_max_normalized_value(val, minimum, maximum):
 #https://github.com/kundajelab/basepairmodels/blob/cf8e346e9df1bad9e55bd459041976b41207e6e5/basepairmodels/cli/fastpredict.py#L59
 def mnll_min_max_bounds(profile):
     """
-        Min Max bounds for the mnll metric
-        
-        Args:
-            profile (numpy.ndarray): true profile 
-        Returns:
-            tuple: (min, max) bounds values
+    Min Max bounds for the mnll metric
+    
+    Args:
+        profile (numpy.ndarray): true profile 
+    Returns:
+        tuple: (min, max) bounds values
     """
     
     # uniform distribution profile
@@ -191,13 +191,13 @@ def mnll_min_max_bounds(profile):
 #https://github.com/kundajelab/basepairmodels/blob/cf8e346e9df1bad9e55bd459041976b41207e6e5/basepairmodels/cli/fastpredict.py#L131
 def jsd_min_max_bounds(profile):
     """
-        Min Max bounds for the jsd metric
+    Min Max bounds for the jsd metric
+    
+    Args:
+        profile (numpy.ndarray): true profile 
         
-        Args:
-            profile (numpy.ndarray): true profile 
-            
-        Returns:
-            tuple: (min, max) bounds values
+    Returns:
+        tuple: (min, max) bounds values
     """
     
     # uniform distribution profile

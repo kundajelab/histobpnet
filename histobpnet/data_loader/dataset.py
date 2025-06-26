@@ -1,6 +1,5 @@
 # Author: Lei Xiong <jsxlei@gmail.com>
 
-
 """
 Data loading and processing module for genomic data.
 
@@ -10,16 +9,11 @@ It handles the loading of genomic regions, their corresponding sequences, and va
 
 from functools import cached_property
 from time import time
-
-# Third-party imports
 import torch
 import numpy as np
 import pandas as pd
 import lightning as L
-
-
-from ..utils.data_utils import load_region_df, load_data, random_crop, crop_revcomp_augment, get_cts
-
+from histobpnet.utils.data_utils import load_region_df, load_data, random_crop, crop_revcomp_augment, get_cts
 
 class DataModule(L.LightningDataModule):
     """DataModule for loading and processing genomic data for training and evaluation.
@@ -147,10 +141,9 @@ class DataModule(L.LightningDataModule):
                 negative_sampling_ratio=config.negative_sampling_ratio,
                 cts_bw_file=config.bigwig,
                 add_revcomp=True,
-                return_coords=False, #return_coords,
-                shuffle_at_epoch_start=False, #shuffle_at_epoch_start
+                return_coords=False,
+                shuffle_at_epoch_start=False,
             )
-                    # val_nonpeaks=val_nonpeaks.sample(n=int(0.1 * val_peaks.shape[0]), replace=False, random_state=config.seed) # config.negative_sampling_ratio
             self.val_dataset = self.dataset_class(
                 peak_regions=val_peaks,
                 nonpeak_regions=val_nonpeaks,
@@ -187,17 +180,14 @@ class DataModule(L.LightningDataModule):
     @cached_property
     def median_count(self):
         import pyBigWig
-        ## Calculate median count to get weight of count loss
+        # Calculate median count to get weight of count loss
         self.train_val_subsampled = concat_peaks_and_subsampled_negatives(self.train_val, negative_sampling_ratio=self.config.negative_sampling_ratio)
         counts_subsampled = get_cts(self.train_val_subsampled, pyBigWig.open(self.config.bigwig), self.config.out_window).sum(-1)
-        # counts_subsampled = extract_loci(self.train_val_subsampled, self.config.bigwig, width=self.config.out_windo, w, out='bigwig', shift=0, pool_size=64).sum(-1)
         return np.median(counts_subsampled)
 
-
-
     def train_dataloader(self):
+        # TODO: consider removing this since it is already called from the ctor of train_dataset...
         self.train_dataset.crop_revcomp_data()
-        # self.train_dataset._get_adj()
         
         return torch.utils.data.DataLoader(
             self.train_dataset, 
@@ -246,11 +236,9 @@ class DataModule(L.LightningDataModule):
             shuffle=False, 
             num_workers=self.config.num_workers, 
         )
-    
+
     def chrom_dataloader(self, chrom='chr1', negative_sampling_ratio=-1):
-
         dataset = self.chrom_dataset(chrom=chrom, negative_sampling_ratio=negative_sampling_ratio)
-
         return torch.utils.data.DataLoader(
             dataset,
             batch_size=self.config.batch_size,
@@ -258,12 +246,10 @@ class DataModule(L.LightningDataModule):
             num_workers=self.config.num_workers,
         ), dataset
 
-
     def chrom_dataset(self, chrom='chr1', negative_sampling_ratio=-1):
         if isinstance(chrom, str):
             if chrom in ['train', 'val', 'test']:
                 chrom = getattr(self, f'{chrom}_chroms')
-                
             elif chrom == 'all':
                 chrom = self.chroms
             else:
@@ -271,8 +257,8 @@ class DataModule(L.LightningDataModule):
 
         regions = self.data[self.data.iloc[:, 0].isin(chrom)].reset_index(drop=True)
         peaks, nonpeaks = split_peak_and_nonpeak(regions)
-        if negative_sampling_ratio > 0 and len(nonpeaks) > len(peaks) * negative_sampling_ratio:
-            nonpeaks = nonpeaks.sample(n=int(negative_sampling_ratio * peaks.shape[0]), replace=False) #, random_state=self.config.seed) # config.negative_sampling_ratio
+        if (negative_sampling_ratio > 0) and (len(nonpeaks) > (len(peaks) * negative_sampling_ratio)):
+            nonpeaks = nonpeaks.sample(n=int(negative_sampling_ratio * len(peaks)), replace=False)
             regions = pd.concat([peaks, nonpeaks], ignore_index=True)
 
         dataset = self.dataset_class(
@@ -291,26 +277,20 @@ class DataModule(L.LightningDataModule):
         )
         return dataset
 
-
-
-
-
 def split_peak_and_nonpeak(data):
     data['is_peak'] = data['is_peak'].astype(int).astype(bool)
     non_peaks = data[~data['is_peak']].copy()
     peaks = data[data['is_peak']].copy()
     return peaks, non_peaks
 
-
 def subsample_nonpeak_data(nonpeak_seqs, nonpeak_cts, nonpeak_coords, peak_data_size, negative_sampling_ratio):
-    #Randomly samples a portion of the non-peak data to use in training
+    # Randomly samples a portion of the non-peak data to use in training
     num_nonpeak_samples = int(negative_sampling_ratio * peak_data_size)
     nonpeak_indices_to_keep = np.random.choice(len(nonpeak_seqs), size=min(num_nonpeak_samples, len(nonpeak_seqs)), replace=False)
     nonpeak_seqs = nonpeak_seqs[nonpeak_indices_to_keep]
     nonpeak_cts = nonpeak_cts[nonpeak_indices_to_keep]
     nonpeak_coords = nonpeak_coords[nonpeak_indices_to_keep]
     return nonpeak_seqs, nonpeak_cts, nonpeak_coords
-
 
 def concat_peaks_and_subsampled_negatives(peaks, negatives=None, negative_sampling_ratio=0.1):
     if negatives is None:
@@ -323,46 +303,28 @@ def concat_peaks_and_subsampled_negatives(peaks, negatives=None, negative_sampli
     data = pd.concat([peaks, negatives], ignore_index=True)
     return data
 
-
-
-
 class ChromBPNetDataset(torch.utils.data.Dataset):
     """Generator for genomic sequence data with random cropping and reverse complement augmentation.
     
     This generator randomly crops (=jitter) and applies reverse complement augmentation to training examples
     for every epoch. It handles both peak and non-peak regions, with configurable sampling ratios.
-    
-    Attributes:
-        peak_seqs: Array of peak sequences
-        nonpeak_seqs: Array of non-peak sequences
-        peak_cts: Array of peak counts
-        nonpeak_cts: Array of non-peak counts
-        peak_coords: Array of peak coordinates
-        nonpeak_coords: Array of non-peak coordinates
-        negative_sampling_ratio: Ratio of negative samples to use
-        inputlen: Length of input sequences
-        outputlen: Length of output sequences
-        batch_size: Size of batches
-        add_revcomp: Whether to add reverse complement augmentation
-        return_coords: Whether to return coordinates
-        shuffle_at_epoch_start: Whether to shuffle at epoch start
     """
     
     def __init__(
-            self, 
-            peak_regions, 
-            nonpeak_regions, 
-            genome_fasta, 
-            batch_size, 
-            inputlen, 
-            outputlen, 
-            max_jitter, 
-            negative_sampling_ratio, 
-            cts_bw_file, 
-            add_revcomp, 
-            return_coords, 
-            shuffle_at_epoch_start, 
-            **kwargs
+        self, 
+        peak_regions, 
+        nonpeak_regions, 
+        genome_fasta, 
+        batch_size, 
+        inputlen, 
+        outputlen, 
+        max_jitter, 
+        negative_sampling_ratio, 
+        cts_bw_file, 
+        add_revcomp, 
+        return_coords, 
+        shuffle_at_epoch_start, 
+        **kwargs
     ):
         """Initialize the generator.
         
@@ -435,7 +397,6 @@ class ChromBPNetDataset(torch.utils.data.Dataset):
                 self.seqs = np.vstack([cropped_peaks, self.nonpeak_seqs])
                 self.cts = np.vstack([cropped_cnts, self.nonpeak_cts])
                 self.coords = np.vstack([cropped_coords, self.nonpeak_coords])
-
         elif self.peak_seqs is not None:
             # Only peak data
             cropped_peaks, cropped_cnts, cropped_coords = random_crop(
@@ -444,7 +405,6 @@ class ChromBPNetDataset(torch.utils.data.Dataset):
             self.seqs = cropped_peaks
             self.cts = cropped_cnts
             self.coords = cropped_coords
-
         elif self.nonpeak_seqs is not None:
             # Only non-peak data
             self.seqs = self.nonpeak_seqs
@@ -455,8 +415,7 @@ class ChromBPNetDataset(torch.utils.data.Dataset):
 
         # Apply augmentation
         self.cur_seqs, self.cur_cts, self.cur_coords = crop_revcomp_augment(
-            self.seqs, self.cts, self.coords, self.inputlen, self.outputlen,
-            self.add_revcomp, shuffle=self.shuffle_at_epoch_start
+            self.seqs, self.cts, self.coords, self.add_revcomp, shuffle=self.shuffle_at_epoch_start,
         )
         self.regions = pd.DataFrame(self.cur_coords, columns=['chrom', 'start', 'forward_or_reverse', 'is_peak'])
         # print('Regions', self.regions['is_peak'].value_counts())
@@ -476,4 +435,3 @@ class ChromBPNetDataset(torch.utils.data.Dataset):
             'onehot_seq': self.cur_seqs[idx].astype(np.float32).transpose(),
             'profile': self.cur_cts[idx].astype(np.float32),
         }
-
