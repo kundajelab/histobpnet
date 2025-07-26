@@ -31,7 +31,6 @@ class BPNet(torch.nn.Module):
     This implementation differs from the original BPNet implementation in
     two ways:
 
-
     (1) The model concatenates stranded control tracks for profile
     prediction as opposed to adding the two strands together and also then
     smoothing that track 
@@ -53,7 +52,6 @@ class BPNet(torch.nn.Module):
     as both the bias model and the accessibility model. Both components are
     the same BPNet architecture but trained on different loci.
 
-
     Parameters
     ----------
     n_filters: int, optional
@@ -69,7 +67,7 @@ class BPNet(torch.nn.Module):
 
     n_control_tracks: int, optional
         The number of control tracks to feed into the model. When predicting
-        TFs, this is usually 2. When predicting accessibility, this is usualy
+        TFs, this is usually 2. When predicting accessibility, this is usually
         0. When 0, this input is removed from the model. Default is 2.
 
     alpha: float, optional

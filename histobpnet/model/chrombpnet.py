@@ -1,22 +1,7 @@
 # Author: Lei Xiong <jsxlei@gmail.com>
 
-import torch
 import torch.nn as nn
-from .bpnet import BPNet
-
-class _Exp(nn.Module):
-    def __init__(self):
-        super(_Exp, self).__init__()
-
-    def forward(self, X):
-        return torch.exp(X)
-
-class _Log(nn.Module):
-    def __init__(self):
-        super(_Log, self).__init__()
-
-    def forward(self, X):
-        return torch.log(X)
+from histobpnet.model.bpnet import BPNet
 
 # adapt from BPNet in bpnet-lite, credit goes to Jacob Schreiber <jmschreiber91@gmail.com>
 class ChromBPNet(nn.Module):

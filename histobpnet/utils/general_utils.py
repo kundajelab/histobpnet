@@ -104,3 +104,18 @@ def multinomial_nll(logits, true_counts):
 def softmax(x, temp=1):
     norm_x = x - np.mean(x,axis=1, keepdims=True)
     return np.exp(temp*norm_x)/np.sum(np.exp(temp*norm_x), axis=1, keepdims=True)
+
+# I think these are needed to do interpretability with DeepSHAP
+class _Exp(torch.nn.Module):
+    def __init__(self):
+        super(_Exp, self).__init__()
+
+    def forward(self, X):
+        return torch.exp(X)
+
+class _Log(torch.nn.Module):
+    def __init__(self):
+        super(_Log, self).__init__()
+
+    def forward(self, X):
+        return torch.log(X)

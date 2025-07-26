@@ -9,7 +9,6 @@ extending the base ModelWrapper class with model-specific functionality.
 
 from typing import Dict, Any, Optional, Union, List
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 import lightning as L
 from lightning import LightningModule
@@ -78,20 +77,6 @@ class _ProfileLogitScaling(torch.nn.Module):
         #print("a") 
         #y_lsm = torch.nn.functional.log_softmax(logits, dim=-1)
         #return torch.sign(logits) * torch.exp(torch.log(abs(logits)) + y_lsm)
-
-class _Exp(torch.nn.Module):
-    def __init__(self):
-        super(_Exp, self).__init__()
-
-    def forward(self, X):
-        return torch.exp(X)
-
-class _Log(torch.nn.Module):
-    def __init__(self):
-        super(_Log, self).__init__()
-
-    def forward(self, X):
-        return torch.log(X)
     
 # TODO
 class ProfileWrapper(torch.nn.Module):

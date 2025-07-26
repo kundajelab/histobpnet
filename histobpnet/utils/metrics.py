@@ -7,6 +7,7 @@ import matplotlib
 from matplotlib import pyplot as plt
 import os
 import json
+import h5py
 # from .metrics_utils import * 
 
 plt.rcParams["figure.figsize"]=10,5
@@ -14,27 +15,7 @@ font = {'weight' : 'bold',
         'size'   : 10}
 matplotlib.rc('font', **font)
 
-def get_regions(regions, seqlen, regions_used=None):
-    # regions file is assumed to be centered at summit (2nd + 10th column)
-    # it is adjusted to be of length seqlen centered at summit
-
-    assert(seqlen%2==0)
-
-    #with open(regions_file) as r:
-    #    regions = [x.strip().split('\t') for x in r]
-
-    # regions = pd.read_csv(regions_file,sep='\t',header=None)
-    #print(regions)
-    if regions_used is None:
-        regions = [[x[0], int(x[1])+int(x[9])-seqlen//2, int(x[1])+int(x[9])+seqlen//2, int(x[1])+int(x[9])] for x in np.array(regions.values)]
-    else:
-        regions = [[x[0], int(x[1])+int(x[9])-seqlen//2, int(x[1])+int(x[9])+seqlen//2, int(x[1])+int(x[9])] for x in np.array(regions.values)[regions_used]]
-
-    return regions
-
-def write_predictions_h5py(profile, logcts, coords, out_dir='.'):
-    import h5py
-
+def write_predictions_h5py(profile, logcts, coords, out_dir: str = './'):
     # open h5 file for writing predictions
     os.makedirs(out_dir, exist_ok=True)
     output_h5_fname = os.path.join(out_dir, "predictions.h5")
@@ -77,6 +58,21 @@ def compare_with_observed(output, regions, out_dir: str = './'):
     # parse output
     parsed_output = {key: np.concatenate([batch[key] for batch in output]) for key in output[0]}
 
+    # TODO what's bigwig_helper?
+    # data = softmax(parsed_output['pred_profile']) * (np.expand_dims(np.exp(parsed_output['pred_count']),axis=1))
+    # bigwig_helper.write_bigwig(
+    #                     data, 
+    #                     regions_array, 
+    #                     gs, 
+    #                     os.path.join(out_dir, "pred.bw"), 
+    #                     outstats_file=None, 
+    #                     debug_chr=None, 
+    #                     use_tqdm=True)
+
+    # TODO
+    # # save predictions into h5py file
+    # write_predictions_h5py(parsed_output['pred_profile_prob'], parsed_output['true_profile'], coords, out_dir)
+
     regions['is_peak'] = regions['is_peak'].astype(int)
     regions['pred_count'] = parsed_output['pred_count']
     regions['true_count'] = parsed_output['true_count']
@@ -86,7 +82,7 @@ def compare_with_observed(output, regions, out_dir: str = './'):
     peak_index = peak_regions.index
     # print(peak_regions.head())
 
-    metrics_dictionary={}
+    metrics_dictionary = {}
     metrics_dictionary["counts_metrics"] = {}
     metrics_dictionary["profile_metrics"] = {}
     # save count metrics

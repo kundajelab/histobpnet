@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Author: Lei Xiong <jsxlei@gmail.com>
 
 import logging

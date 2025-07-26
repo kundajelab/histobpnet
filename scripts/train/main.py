@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Author: Lei Xiong <jsxlei@gmail.com>
 
 """
@@ -25,12 +23,10 @@ import os
 import argparse
 import lightning as L
 import torch
-from lightning.pytorch.strategies import DDPStrategy    
+from lightning.pytorch.strategies import DDPStrategy  
+
 from histobpnet.utils.general_utils import get_instance_id, set_random_seed
-
-# Set random seed for reproducibility. does this have to be before the imports below? :hmm:
 set_random_seed(seed = 42)
-
 from histobpnet.model.model_config import ChromBPNetConfig
 from histobpnet.model.model_wrappers import create_model_wrapper, load_pretrained_model, adjust_bias_model_logcounts
 from histobpnet.data_loader.dataset import DataModule
@@ -174,7 +170,7 @@ def load_model(args):
     model = load_pretrained_model(args)
     return model
 
-# TODO review
+# TODO review + metrics.py
 def predict(args, model, datamodule=None):
     trainer = L.Trainer(logger=False, fast_dev_run=args.fast_dev_run, devices=args.gpu, val_check_interval=None) 
     log = create_logger(args.model_type, ch=True, fh=os.path.join(args.out_dir, f'predict.log'), overwrite=True)
@@ -193,7 +189,7 @@ def predict(args, model, datamodule=None):
         log.info(f"Distribution of peaks/negatives for {chrom}: {regions['is_peak'].value_counts()}")
         compare_with_observed(trainer.predict(model, dataloader), regions, os.path.join(args.out_dir, 'evaluation', chrom))    
 
-# TODO review
+# TODO review + interpret.py
 def interpret(args, model, datamodule=None):
     if datamodule is None:
         data_config = DataConfig.from_argparse_args(args)
