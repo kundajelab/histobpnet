@@ -104,7 +104,7 @@ def random_rev_comp(seqs, labels, coords, frac=0.5):
     seqs[pos_to_rc] = seqs[pos_to_rc, ::-1, ::-1]
     labels[pos_to_rc] = labels[pos_to_rc, ::-1]
     coords[pos_to_rc,2] =  "r"
-	
+
     return seqs, labels, coords
 
 def crop_revcomp_augment(seqs, labels, coords, add_revcomp, rc_frac=0.5, shuffle=False):
@@ -393,13 +393,12 @@ def hdf5_to_bigwig(hdf5, regions, chrom_sizes, output_prefix, output_prefix_stat
                         debug_chr=debug_chr, 
                         use_tqdm=tqdm)
 
-from weasyprint import HTML, CSS
-
 def html_to_pdf(input_html, output_pdf):
-	css = CSS(string='''
-		@page {
-			size: 1800mm 1300mm;
-			margin: 0in 0in 0in 0in;
-		}
-	''')
-	HTML(input_html).write_pdf(output_pdf, stylesheets=[css])
+    from weasyprint import HTML, CSS
+    css = CSS(string='''
+        @page {
+            size: 1800mm 1300mm;
+            margin: 0in 0in 0in 0in;
+    }
+    ''')
+    HTML(input_html).write_pdf(output_pdf, stylesheets=[css])

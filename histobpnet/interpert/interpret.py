@@ -26,7 +26,7 @@ def _deep_lift_shap(model, X, args=None, target=0,  batch_size=1024,
 	print_convergence_deltas=False, raw_outputs=False, device='cuda', 
 	random_state=None, verbose=False):
 	"""A wrapper that registers Chrom/BPNet's custom non-linearities.
-
+	
 	This function is just a wrapper for tangermeme's deep_lift_shap function
 	except that it automatically registers the layers that are necessary for
 	using BPNet models. Specifically, it registers a scaling that is necessary

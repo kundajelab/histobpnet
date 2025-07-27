@@ -134,8 +134,8 @@ class BPNet(torch.nn.Module):
         ])
 
         self.rrelus = torch.nn.ModuleList([
-			torch.nn.ReLU() for i in range(1, self.n_layers+1)
-		])
+            torch.nn.ReLU() for i in range(1, self.n_layers+1)
+        ])
 
         # profile prediction
         self.fconv = torch.nn.Conv1d(n_filters+n_control_tracks, n_outputs, 

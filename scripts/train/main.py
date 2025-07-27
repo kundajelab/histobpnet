@@ -13,7 +13,6 @@ from histobpnet.model.model_config import ChromBPNetConfig
 from histobpnet.model.model_wrappers import create_model_wrapper, load_pretrained_model, adjust_bias_model_logcounts
 from histobpnet.data_loader.dataset import DataModule
 from histobpnet.utils.metrics import compare_with_observed
-from histobpnet.interpert.interpret import run_modisco_and_shap 
 from histobpnet.logging.logger import create_logger
 
 # Example usage:
@@ -197,6 +196,8 @@ def predict(args, model, datamodule=None):
 
 # TODO review + interpret.py
 def interpret(args, model, datamodule=None):
+    from histobpnet.interpert.interpret import run_modisco_and_shap 
+    
     if datamodule is None:
         data_config = DataConfig.from_argparse_args(args)
         datamodule = DataModule(data_config)
