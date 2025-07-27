@@ -20,7 +20,6 @@ class ChromBPNet(nn.Module):
     using a frozen version of the bias model. The bias model learns to remove
     the enzyme bias so that the accessibility model can learn real motifs.
 
-
     Parameters
     ----------
     bias: torch.nn.Module 

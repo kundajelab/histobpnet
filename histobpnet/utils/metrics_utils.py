@@ -9,14 +9,12 @@ from scipy.stats import multinomial
 import math
 from scipy.spatial.distance import jensenshannon
 
-
 plt.rcParams["figure.figsize"]=10,5
 font = {
     # 'family' : 'normal',
         'weight' : 'bold',
         'size'   : 10}
 matplotlib.rc('font', **font)
-
 
 def _fix_sum_to_one(probs):
     """
@@ -40,7 +38,6 @@ def _fix_sum_to_one(probs):
         _probs[np.argmin(_probs)] += 1.0 - np.sum(_probs)
 
     return _probs
-    
 
 def density_scatter(x, y, xlab, ylab, ax = None, sort = True, bins = 20, fontsize=20):
     """

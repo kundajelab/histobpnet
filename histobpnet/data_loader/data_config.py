@@ -1,26 +1,10 @@
-# Author: Lei Xiong <jsxlei@gmail.com>
-
-"""
-Data configuration classes.
-
-This module provides configuration classes for different data types and processing steps.
-It includes parameter validation and default values for common configurations.
-"""
-
-from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Any, Union, Tuple
+from dataclasses import dataclass
+from typing import List, Any, Union
 from argparse import ArgumentParser, Namespace
 import os
 import json
-from histobpnet.utils.parse_utils import add_argparse_args, from_argparse_args, parse_argparser, get_init_arguments_and_types
+from histobpnet.utils.parse_utils import add_argparse_args, from_argparse_args
 
-# TODO update
-HG38_GENOME_DIR = '/oak/stanford/groups/akundaje/leixiong/genome/hg38'
-DATA_DIR = '/oak/stanford/groups/akundaje/leixiong/data/atac/K562'
-MEME_FILE = '/oak/stanford/groups/akundaje/leixiong/genomemotifs/motifs.meme.txt'
-HG38_FASTA = os.path.join(HG38_GENOME_DIR, 'hg38.fa')
-HG38_CHROM_SIZES = os.path.join(HG38_GENOME_DIR, 'hg38.chrom.sizes')
-    
 @dataclass
 class DataConfig:
     """Base configuration class for data handling.
@@ -31,8 +15,7 @@ class DataConfig:
     
     def __init__(
         self,
-        data_dir: str = DATA_DIR,
-        # data_name: str = 'K562',
+        data_dir: str = "",
         peaks: str = '{}/peaks.bed',
         negatives: str = '{}/negatives.bed', 
         bigwig: str = '{}/unstranded.bw', 
@@ -43,27 +26,22 @@ class DataConfig:
         ctl_minus: str = None, 
         negative_sampling_ratio: float = 0.1,
         saved_data: str = None,
-        fasta: str = HG38_FASTA,
-        chrom_sizes: dict = HG38_CHROM_SIZES,
-        fold_dir: str = os.path.join(HG38_GENOME_DIR, 'splits'),
+        fasta: str = "",
+        chrom_sizes: str = "",
+        fold_path: str = "",
         in_window: int = 2114,
         out_window: int = 1000,
         shift: int = 500,
         rc: float = 0.5,
         outlier_threshold: float = 0.999,
         data_type: str = 'profile',
-        # TODO no mutable defaults, make those constants
-        training_chroms: List = [
-            "chr2", "chr4", "chr5", "chr7", "chr9", "chr10", "chr11", "chr12", "chr13", "chr14",
-            "chr15", "chr16", "chr17", "chr18", "chr19", "chr21", "chr22", "chrX", "chrY"],
-        validation_chroms: List = ['chr8', 'chr20'],
-        test_chroms: List = ["chr1", "chr3", "chr6"],
-        exclude_chroms: List = [],
-        fold: int = 0,
+        training_chroms: List = None,
+        validation_chroms: List = None,
+        test_chroms: List = None,
+        exclude_chroms: List = None,
         batch_size: int = 64,
         num_workers: int = 32,
         debug: bool = False,
-        **kwargs,
     ):
         self.data_dir = data_dir
         self.peaks = peaks.format(data_dir)
@@ -88,14 +66,26 @@ class DataConfig:
         self.validation_chroms = validation_chroms
         self.test_chroms = test_chroms
         self.exclude_chroms = exclude_chroms
-        self.fold = fold
         self.batch_size = batch_size    
         self.num_workers = num_workers
         self.debug = debug
-        splits_dict = json.load(open(os.path.join(fold_dir, f'fold_{fold}.json')))
+        # this should be in validation functions but we need it here to load the chrom, so oh well
+        assert os.path.isfile(fold_path) and fold_path.endswith('.json'), f"Fold path must be a valid JSON file: {fold_path}"
+        splits_dict = json.load(open(fold_path))
         self.training_chroms = splits_dict['train'] if training_chroms is None else training_chroms
         self.validation_chroms = splits_dict['valid'] if validation_chroms is None else validation_chroms
         self.test_chroms = splits_dict['test'] if test_chroms is None else test_chroms
+        self.exclude_chroms = [] if exclude_chroms is None else exclude_chroms
+        
+    @classmethod
+    def add_argparse_args(cls, parent_parser: ArgumentParser, **kwargs: Any):
+        return add_argparse_args(cls, parent_parser, **kwargs)
+
+    @classmethod
+    def from_argparse_args(
+        cls, args: Union[Namespace, ArgumentParser], **kwargs: Any
+    ):
+        return from_argparse_args(cls, args, **kwargs)
     
     def __post_init__(self):
         """Validate configuration parameters after initialization."""
@@ -140,44 +130,3 @@ class DataConfig:
         """Validate data type parameter."""
         if self.data_type not in ['profile', 'longrange']:
             raise ValueError("Data type must be either 'profile' or 'longrange'")
-
-    @classmethod
-    def add_argparse_args(cls, parent_parser: ArgumentParser, **kwargs: Any):
-        """Extends existing argparse by default `LightningDataModule` attributes.
-
-        Example:
-            parser = ArgumentParser(add_help=False)
-            parser = LightningDataModule.add_argparse_args(parser)
-        """
-        return add_argparse_args(cls, parent_parser, **kwargs)
-
-    @classmethod
-    def from_argparse_args(
-        cls, args: Union[Namespace, ArgumentParser], **kwargs: Any
-    ) -> Union["pl.LightningDataModule", "pl.Trainer"]:
-        """Create an instance from CLI arguments.
-
-        Args:
-            args: The parser or namespace to take arguments from. Only known arguments will be
-                parsed and passed to the :class:`~pytorch_lightning.core.datamodule.LightningDataModule`.
-            **kwargs: Additional keyword arguments that may override ones in the parser or namespace.
-                These must be valid DataModule arguments.
-
-        Example:
-            module = LightningDataModule.from_argparse_args(args)
-        """
-        return from_argparse_args(cls, args, **kwargs)
-
-    @classmethod
-    def parse_argparser(cls, arg_parser: Union[ArgumentParser, Namespace]) -> Namespace:
-        return parse_argparser(cls, arg_parser)
-
-    @classmethod
-    def get_init_arguments_and_types(cls) -> List[Tuple[str, Tuple, Any]]:
-        r"""Scans the DataModule signature and returns argument names, types and default values.
-
-        Returns:
-            List with tuples of 3 values:
-            (argument name, set with argument types, argument default value).
-        """
-        return get_init_arguments_and_types(cls)

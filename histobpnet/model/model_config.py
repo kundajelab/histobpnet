@@ -1,52 +1,19 @@
-# Author: Lei Xiong <jsxlei@gmail.com>
-
 from argparse import ArgumentParser, Namespace
-from typing import Any, List, Tuple, Union
-from histobpnet.utils.parse_utils import add_argparse_args, from_argparse_args, parse_argparser, get_init_arguments_and_types
+from typing import Any, Union
+from histobpnet.utils.parse_utils import add_argparse_args, from_argparse_args
 
 class BaseConfig:
     model_type = "base"
 
     @classmethod
     def add_argparse_args(cls, parent_parser: ArgumentParser, **kwargs: Any):
-        """Extends existing argparse by default `LightningDataModule` attributes.
-
-        Example:
-            parser = ArgumentParser(add_help=False)
-            parser = LightningDataModule.add_argparse_args(parser)
-        """
         return add_argparse_args(cls, parent_parser, **kwargs)
 
     @classmethod
     def from_argparse_args(
         cls, args: Union[Namespace, ArgumentParser], **kwargs: Any
-    ) -> Union["pl.LightningDataModule", "pl.Trainer"]:
-        """Create an instance from CLI arguments.
-
-        Args:
-            args: The parser or namespace to take arguments from. Only known arguments will be
-                parsed and passed to the :class:`~pytorch_lightning.core.datamodule.LightningDataModule`.
-            **kwargs: Additional keyword arguments that may override ones in the parser or namespace.
-                These must be valid DataModule arguments.
-
-        Example:
-            module = LightningDataModule.from_argparse_args(args)
-        """
+    ):
         return from_argparse_args(cls, args, **kwargs)
-
-    @classmethod
-    def parse_argparser(cls, arg_parser: Union[ArgumentParser, Namespace]) -> Namespace:
-        return parse_argparser(cls, arg_parser)
-
-    @classmethod
-    def get_init_arguments_and_types(cls) -> List[Tuple[str, Tuple, Any]]:
-        r"""Scans the DataModule signature and returns argument names, types and default values.
-
-        Returns:
-            List with tuples of 3 values:
-            (argument name, set with argument types, argument default value).
-        """
-        return get_init_arguments_and_types(cls)
     
 class ChromBPNetConfig(BaseConfig):
     model_type = "chrombpnet"
