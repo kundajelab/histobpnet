@@ -13,7 +13,15 @@ import torch
 import numpy as np
 import pandas as pd
 import lightning as L
-from histobpnet.utils.data_utils import load_region_df, load_data, random_crop, crop_revcomp_augment, get_cts
+from histobpnet.utils.data_utils import (
+    load_region_df,
+    load_data,
+    random_crop,
+    crop_revcomp_augment,
+    get_cts,
+    split_peak_and_nonpeak,
+    concat_peaks_and_subsampled_negatives,
+)
 
 class DataModule(L.LightningDataModule):
     """DataModule for loading and processing genomic data for training and evaluation.
@@ -52,7 +60,7 @@ class DataModule(L.LightningDataModule):
         if self.config.data_type == 'profile':
             self.dataset_class = ChromBPNetDataset
         else:
-            raise ValueError(f'Invalid data type: {self.config.data_type}')
+            raise NotImplementedError(f'Unsupported data type: {self.config.data_type}')
 
         # Load and process data
         self._load_regions()
@@ -97,6 +105,8 @@ class DataModule(L.LightningDataModule):
 
     def _debug_subsample(self):
         """Subsample data for debugging purposes."""
+        # chagpt: you must pass random_state explicitly, or the result will be random every time, even
+        # if you called np.random.seed(seed) before (eg during set_random_seed)
         self.peaks = self.peaks.sample(n=int(0.01*len(self.peaks)), random_state=42)
         if self.negatives is not None:
             self.negatives = self.negatives.sample(n=int(0.1*len(self.peaks)), random_state=42)
@@ -113,14 +123,12 @@ class DataModule(L.LightningDataModule):
 
     def _split_data(self):
         """Split data into training, validation and testing sets."""
-        self.train_val = self.data[self.data.iloc[:, 0].isin(self.val_chroms+self.train_chroms)].reset_index(drop=True)
         self.train_data = self.data[self.data.iloc[:, 0].isin(self.train_chroms)].reset_index(drop=True)
-        if self.config.background is not None and self.config.data_type == 'longrange': # add background to train data
-            self.train_background = self.background[self.background.iloc[:, 0].isin(self.train_chroms)].reset_index(drop=True)
-            self.train_data = pd.concat([self.train_data, self.train_background], ignore_index=True)
         self.val_data = self.data[self.data.iloc[:, 0].isin(self.val_chroms)].reset_index(drop=True)
+        self.train_val_data = self.data[self.data.iloc[:, 0].isin(self.val_chroms+self.train_chroms)].reset_index(drop=True)
         self.test_data = self.data[self.data.iloc[:, 0].isin(self.test_chroms)].reset_index(drop=True)
 
+    # TODO go through
     def setup(self, stage='fit'):
         print('Setting up data...'); t0 = time()
 
@@ -195,7 +203,6 @@ class DataModule(L.LightningDataModule):
             shuffle=True, 
             drop_last=False,
             num_workers=self.config.num_workers, 
-            # pin_memory=True,
         )
 
     def val_dataloader(self):
@@ -204,7 +211,6 @@ class DataModule(L.LightningDataModule):
             batch_size=self.config.batch_size, 
             shuffle=False, 
             num_workers=self.config.num_workers, 
-            # pin_memory=True
         )
     
     def test_dataloader(self):
@@ -276,32 +282,6 @@ class DataModule(L.LightningDataModule):
             shuffle_at_epoch_start=False,
         )
         return dataset
-
-def split_peak_and_nonpeak(data):
-    data['is_peak'] = data['is_peak'].astype(int).astype(bool)
-    non_peaks = data[~data['is_peak']].copy()
-    peaks = data[data['is_peak']].copy()
-    return peaks, non_peaks
-
-def subsample_nonpeak_data(nonpeak_seqs, nonpeak_cts, nonpeak_coords, peak_data_size, negative_sampling_ratio):
-    # Randomly samples a portion of the non-peak data to use in training
-    num_nonpeak_samples = int(negative_sampling_ratio * peak_data_size)
-    nonpeak_indices_to_keep = np.random.choice(len(nonpeak_seqs), size=min(num_nonpeak_samples, len(nonpeak_seqs)), replace=False)
-    nonpeak_seqs = nonpeak_seqs[nonpeak_indices_to_keep]
-    nonpeak_cts = nonpeak_cts[nonpeak_indices_to_keep]
-    nonpeak_coords = nonpeak_coords[nonpeak_indices_to_keep]
-    return nonpeak_seqs, nonpeak_cts, nonpeak_coords
-
-def concat_peaks_and_subsampled_negatives(peaks, negatives=None, negative_sampling_ratio=0.1):
-    if negatives is None:
-        peaks, negatives = split_peak_and_nonpeak(peaks)
-        # print(peaks.shape, negatives.shape)
-
-    if len(negatives) > len(peaks) * negative_sampling_ratio and negative_sampling_ratio > 0:
-        negatives = negatives.sample(n=int(negative_sampling_ratio * len(peaks)), replace=False)
-        
-    data = pd.concat([peaks, negatives], ignore_index=True)
-    return data
 
 class ChromBPNetDataset(torch.utils.data.Dataset):
     """Generator for genomic sequence data with random cropping and reverse complement augmentation.

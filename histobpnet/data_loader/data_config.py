@@ -98,7 +98,8 @@ class DataConfig:
         """Validate that all required files exist."""
         required_files = {
             'FASTA': self.fasta,
-            'BigWig': self.bigwig,
+            # TODO What is this for? I dont know where to find it...
+            # 'BigWig': self.bigwig,
             'Peaks': self.peaks
         }
         

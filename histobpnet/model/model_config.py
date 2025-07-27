@@ -27,8 +27,8 @@ class ChromBPNetConfig(BaseConfig):
         profile_kernel_size: int=75,
         n_outputs: int=1, 
         n_control_tracks: int=0, 
-        profile_output_bias: int=True, 
-        count_output_bias: int=True, 
+        profile_output_bias: bool=True, 
+        count_output_bias: bool=True, 
         **kwargs,
     ):
         super().__init__(**kwargs)

@@ -1,11 +1,113 @@
-# Author: Lei Xiong <jsxlei@gmail.com>
-
 import numpy as np
 import pandas as pd
 import pyBigWig
 import pyfaidx
 import deepdish
 import os
+from toolbox.logger import cprint
+
+def read_chrom_sizes(fname):
+    with open(fname) as f:
+        gs = [x.strip().split('\t') for x in f]
+    gs = {x[0]: int(x[1]) for x in gs if len(x)==2}
+
+    return gs
+
+def format_region(df, width=500):
+    df.loc[:, 'start'] = df.loc[:, 'start'].astype(np.int64) + df.loc[:, 'summit'] - width // 2
+    df.loc[:, 'end'] = df.loc[:, 'start'] + width 
+    df.loc[:, 'summit'] = width // 2
+    return df
+
+def expand_3col_to_10col(df):
+    if df.shape[1] != 3:
+        df = df.iloc[:, :3].copy()
+    for i in ['name', 'score', 'strand', 'signalValue', 'pValue', 'qValue']: #range(4, 10):
+        df[f'{i}'] = '.'
+    df.iloc[:, 1] = df.iloc[:, 1].astype(int)
+    df.iloc[:, 2] = df.iloc[:, 2].astype(int)
+    df['summit'] = (df.iloc[:, 2] - df.iloc[:, 1]) // 2
+    df.columns = ['chr', 'start', 'end', 'name', 'score', 'strand', 'signalValue', 'pValue', 'qValue', 'summit']
+    df['start'] = df['start'].astype(int)
+    df['end'] = df['end'].astype(int)
+    df['summit'] = df['summit'].astype(int)
+    return df
+
+# TODO valeh: walk through this
+def load_region_df(regions_bed, chrom_sizes=None, in_window=2114, shift=0, is_peak: bool=True, logger=None, width=500):
+    """
+    Load the DataFrame and, optionally, filter regions in it that exceed defined chromosome sizes.
+    """
+    if isinstance(regions_bed, pd.DataFrame):
+        df = regions_bed
+    else:
+        if not os.path.exists(regions_bed) and os.path.exists(regions_bed+'.gz'):
+            regions_bed = regions_bed+'.gz'
+        df = pd.read_csv(regions_bed, sep='\t', header=None)
+
+    if isinstance(chrom_sizes, str):
+        chrom_sizes = read_chrom_sizes(chrom_sizes)
+
+    if df.shape[1] < 10:
+        df = expand_3col_to_10col(df)
+    df['is_peak'] = is_peak
+
+    if chrom_sizes is not None:
+        # assume column0 is chr, column 9 is the summit
+        flank_length = in_window // 2 + shift
+        chrom_lengths = df.iloc[:, 0].map(lambda chrom: int(chrom_sizes.get(chrom, float('inf'))))
+        if df.shape[1] < 10:
+            # valeh: would we ever be here after the call to expand_3col_to_10col above?
+            mid = (df.iloc[:, 1] + df.iloc[:, 2]) // 2
+            filtered_df = df[
+                (mid - flank_length > 0) &
+                (mid + flank_length <= chrom_lengths)
+            ]
+        else:
+            center = (df.iloc[:, 9] + df.iloc[:, 1])
+            filtered_df = df[
+                (center - flank_length > 0) &
+                (center + flank_length <= chrom_lengths)
+            ]
+    else:
+        cprint("Warning: No chromosome sizes provided, skipping filtering by chromosome length.", logger=logger)
+        filtered_df = df
+    filtered_df.columns = ['chr', 'start', 'end', 'name', 'score', 'strand', 'signalValue', 'pValue', 'qValue', 'summit', 'is_peak']
+
+    # TODO valeh:what does formatting do?
+    cprint(f"Formatted {filtered_df.shape[0]} regions from {regions_bed} using width {width}.", logger=logger)
+    filtered_df = format_region(filtered_df, width=width)
+
+    # Reset index to avoid index errors
+    return filtered_df.reset_index(drop=True)
+
+def subsample_nonpeak_data(nonpeak_seqs, nonpeak_cts, nonpeak_coords, peak_data_size, negative_sampling_ratio):
+    # Randomly samples a portion of the non-peak data to use in training
+    num_nonpeak_samples = int(negative_sampling_ratio * peak_data_size)
+    nonpeak_indices_to_keep = np.random.choice(len(nonpeak_seqs), size=min(num_nonpeak_samples, len(nonpeak_seqs)), replace=False)
+    nonpeak_seqs = nonpeak_seqs[nonpeak_indices_to_keep]
+    nonpeak_cts = nonpeak_cts[nonpeak_indices_to_keep]
+    nonpeak_coords = nonpeak_coords[nonpeak_indices_to_keep]
+    return nonpeak_seqs, nonpeak_cts, nonpeak_coords
+
+def concat_peaks_and_subsampled_negatives(peaks, negatives=None, negative_sampling_ratio=0.1):
+    if negatives is None:
+        peaks, negatives = split_peak_and_nonpeak(peaks)
+        # print(peaks.shape, negatives.shape)
+
+    if len(negatives) > len(peaks) * negative_sampling_ratio and negative_sampling_ratio > 0:
+        negatives = negatives.sample(n=int(negative_sampling_ratio * len(peaks)), replace=False)
+        
+    data = pd.concat([peaks, negatives], ignore_index=True)
+    return data
+
+def split_peak_and_nonpeak(data):
+    data['is_peak'] = data['is_peak'].astype(int).astype(bool)
+    non_peaks = data[~data['is_peak']].copy()
+    peaks = data[data['is_peak']].copy()
+    return peaks, non_peaks
+
+# valeh: REVIEWED ^^^^^^
 
 def dna_to_one_hot(seqs):
     """
@@ -130,77 +232,6 @@ def crop_revcomp_augment(seqs, labels, coords, add_revcomp, rc_frac=0.5, shuffle
         mod_coords = mod_coords[perm]
 
     return mod_seqs, mod_labels, mod_coords
-
-def read_chrom_sizes(fname):
-    with open(fname) as f:
-        gs = [x.strip().split('\t') for x in f]
-    gs = {x[0]: int(x[1]) for x in gs if len(x)==2}
-
-    return gs
-
-def format_region(df, width=500):
-    df.loc[:, 'start'] = df.loc[:, 'start'].astype(np.int64) + df.loc[:, 'summit'] - width // 2
-    df.loc[:, 'end'] = df.loc[:, 'start'] + width 
-    df.loc[:, 'summit'] = width // 2
-    return df
-
-def expand_3col_to_10col(df):
-    if df.shape[1] != 3:
-        df = df.iloc[:, :3].copy()
-    for i in ['name', 'score', 'strand', 'signalValue', 'pValue', 'qValue']: #range(4, 10):
-        df[f'{i}'] = '.'
-    df.iloc[:, 1] = df.iloc[:, 1].astype(int)
-    df.iloc[:, 2] = df.iloc[:, 2].astype(int)
-    df['summit'] = (df.iloc[:, 2] - df.iloc[:, 1]) // 2
-    df.columns = ['chr', 'start', 'end', 'name', 'score', 'strand', 'signalValue', 'pValue', 'qValue', 'summit']
-    df['start'] = df['start'].astype(int)
-    df['end'] = df['end'].astype(int)
-    df['summit'] = df['summit'].astype(int)
-    return df
-
-def load_region_df(peak_bed, chrom_sizes=None, in_window=2114, shift=0, width=500, is_peak=True):
-    """
-    Filters regions in the DataFrame that exceed defined chromosome sizes.
-
-    Parameters:
-    - df (pd.DataFrame): DataFrame with columns 'chr', 'start', and 'end'.
-    - chrom_sizes (dict): Dictionary with chromosome names as keys and sizes as values.
-
-    Returns:
-    - pd.DataFrame: Filtered DataFrame where no region exceeds the chromosome boundaries.
-    """
-    # Apply filter to check each row
-    # Assume column0 is chr, column 9 is the summit
-    if isinstance(peak_bed, pd.DataFrame):
-        df = peak_bed
-    else:
-        if not os.path.exists(peak_bed) and os.path.exists(peak_bed+'.gz'):
-            peak_bed = peak_bed+'.gz'
-        df = pd.read_csv(peak_bed, sep='\t', header=None)
-
-    if isinstance(chrom_sizes, str):
-        chrom_sizes = read_chrom_sizes(chrom_sizes)
-
-    if df.shape[1] < 10:
-        df = expand_3col_to_10col(df)
-    # print(peak_bed, df.head())
-    df['is_peak'] = is_peak
-    if chrom_sizes is not None:
-        flank_length = in_window // 2 + shift
-        if df.shape[1] < 10:
-            filtered_df = df[df.apply(
-                lambda row: (row.iloc[1] + row.iloc[2]) // 2 - flank_length > 0 
-                        and (row.iloc[1] + row.iloc[2]) // 2 + flank_length <= int(chrom_sizes.get(row.iloc[0], float('inf'))), axis=1)]
-        else:
-            filtered_df = df[df.apply(
-                lambda row: row.iloc[9] + row.iloc[1] -  flank_length > 0 
-                        and row.iloc[9] + row.iloc[1] + flank_length <= int(chrom_sizes.get(row.iloc[0], float('inf'))), axis=1)]
-    else:
-        filtered_df = df
-    
-    filtered_df.columns = ['chr', 'start', 'end', 'name', 'score', 'strand', 'signalValue', 'pValue', 'qValue', 'summit', 'is_peak']
-    filtered_df = format_region(filtered_df, width=500)
-    return filtered_df.reset_index(drop=True) # Reset index to avoid index errors
 
 def get_seq(peaks_df, genome, width):
     """

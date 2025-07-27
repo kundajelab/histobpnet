@@ -311,7 +311,7 @@ def get_gc_content(genome, peaks_bed: str, chrom_sizes, inputlen: int, output_pr
     pct_filtered = round(filtered_peaks*100.0/data.shape[0], 3)
     logger.add_to_log(f"Percentage of regions filtered: {str(pct_filtered)}%" )
     if pct_filtered > 25:
-    	logger.add_to_log("WARNING: Percentage of regions filtered is high (>25%), your genome is likely very small - consider using a smaller inputlen")
+    logger.add_to_log("WARNING: Percentage of regions filtered is high (>25%), your genome is likely very small - consider using a smaller inputlen")
 
 def main(instance_id: str):
     args_d, output_dir, logger = setup(instance_id)
