@@ -13,6 +13,10 @@ def read_chrom_sizes(fname):
 
     return gs
 
+# format_region modifies the start and end columns of a DataFrame
+# to center the region around the summit and set the width to a specified value.
+# It also sets the summit to be half of the width.
+# A better name for this function could be `center_region_around_summit`.
 def format_region(df, width=500):
     df.loc[:, 'start'] = df.loc[:, 'start'].astype(np.int64) + df.loc[:, 'summit'] - width // 2
     df.loc[:, 'end'] = df.loc[:, 'start'] + width 
@@ -33,7 +37,6 @@ def expand_3col_to_10col(df):
     df['summit'] = df['summit'].astype(int)
     return df
 
-# TODO valeh: walk through this
 def load_region_df(regions_bed, chrom_sizes=None, in_window=2114, shift=0, is_peak: bool=True, logger=None, width=500):
     """
     Load the DataFrame and, optionally, filter regions in it that exceed defined chromosome sizes.
@@ -53,28 +56,20 @@ def load_region_df(regions_bed, chrom_sizes=None, in_window=2114, shift=0, is_pe
     df['is_peak'] = is_peak
 
     if chrom_sizes is not None:
-        # assume column0 is chr, column 9 is the summit
+        # assume column 0 is chr, column 9 is the summit, column 1 is start, column 2 is end
         flank_length = in_window // 2 + shift
         chrom_lengths = df.iloc[:, 0].map(lambda chrom: int(chrom_sizes.get(chrom, float('inf'))))
-        if df.shape[1] < 10:
-            # valeh: would we ever be here after the call to expand_3col_to_10col above?
-            mid = (df.iloc[:, 1] + df.iloc[:, 2]) // 2
-            filtered_df = df[
-                (mid - flank_length > 0) &
-                (mid + flank_length <= chrom_lengths)
-            ]
-        else:
-            center = (df.iloc[:, 9] + df.iloc[:, 1])
-            filtered_df = df[
-                (center - flank_length > 0) &
-                (center + flank_length <= chrom_lengths)
-            ]
+        assert (df.shape[1] < 10), "DataFrame should have at least 10 columns after expanding to 10 columns."
+        center = (df.iloc[:, 9] + df.iloc[:, 1])
+        filtered_df = df[
+            (center - flank_length > 0) &
+            (center + flank_length <= chrom_lengths)
+        ]
     else:
         cprint("Warning: No chromosome sizes provided, skipping filtering by chromosome length.", logger=logger)
         filtered_df = df
     filtered_df.columns = ['chr', 'start', 'end', 'name', 'score', 'strand', 'signalValue', 'pValue', 'qValue', 'summit', 'is_peak']
 
-    # TODO valeh:what does formatting do?
     cprint(f"Formatted {filtered_df.shape[0]} regions from {regions_bed} using width {width}.", logger=logger)
     filtered_df = format_region(filtered_df, width=width)
 
@@ -96,6 +91,7 @@ def concat_peaks_and_subsampled_negatives(peaks, negatives=None, negative_sampli
         # print(peaks.shape, negatives.shape)
 
     if len(negatives) > len(peaks) * negative_sampling_ratio and negative_sampling_ratio > 0:
+        # TODO: do we need to pass random state here?
         negatives = negatives.sample(n=int(negative_sampling_ratio * len(peaks)), replace=False)
         
     data = pd.concat([peaks, negatives], ignore_index=True)
@@ -106,6 +102,24 @@ def split_peak_and_nonpeak(data):
     non_peaks = data[~data['is_peak']].copy()
     peaks = data[data['is_peak']].copy()
     return peaks, non_peaks
+
+def get_cts(peaks_df, bw, width):
+    """
+    Fetches values from a bigwig bw, given a df with minimally
+    chr, start and summit columns. Summit is relative to start.
+    Retrieves values of specified width centered at summit.
+
+    "cts" = per base counts across a region
+
+    return shape: (len(peaks_df), width)
+    """
+    vals = []
+    for _, r in peaks_df.iterrows():
+        vals.append(np.nan_to_num(bw.values(r['chr'], 
+                                            r['start'] + r['summit'] - width//2,
+                                            r['start'] + r['summit'] + width//2)))
+        
+    return np.array(vals)
 
 # valeh: REVIEWED ^^^^^^
 
@@ -243,22 +257,6 @@ def get_seq(peaks_df, genome, width):
         vals.append(sequence)
 
     return dna_to_one_hot(vals)
-
-def get_cts(peaks_df, bw, width):
-    """
-    Fetches values from a bigwig bw, given a df with minimally
-    chr, start and summit columns. Summit is relative to start.
-    Retrieves values of specified width centered at summit.
-
-    "cts" = per base counts across a region
-    """
-    vals = []
-    for i, r in peaks_df.iterrows():
-        vals.append(np.nan_to_num(bw.values(r['chr'], 
-                                            r['start'] + r['summit'] - width//2,
-                                            r['start'] + r['summit'] + width//2)))
-        
-    return np.array(vals)
 
 def get_coords(peaks_df, peaks_bool):
     """

@@ -1,20 +1,10 @@
-# Author: Lei Xiong <jsxlei@gmail.com>
-
-"""
-Model-specific wrappers for different architectures.
-
-This module provides specialized wrappers for BPNet, ChromBPNet, and RegNet models,
-extending the base ModelWrapper class with model-specific functionality.
-"""
-
-from typing import Dict, Any, Optional, Union, List
+from typing import Dict, Any, Union
 import torch
 import torch.nn.functional as F
 import lightning as L
 from lightning import LightningModule
 from lightning.pytorch.utilities.types import STEP_OUTPUT
 import numpy as np
-import argparse
 
 from histobpnet.model.chrombpnet import BPNet, ChromBPNet
 from histobpnet.model.model_config import ChromBPNetConfig
@@ -49,6 +39,7 @@ def adjust_bias_model_logcounts(bias_model, dataloader, verbose=False, device=1)
         print('### delta', delta.mean(), flush=True)
     return bias_model
 
+# TODO
 class _ProfileLogitScaling(torch.nn.Module):
     """This ugly class is necessary because of Captum.
 
@@ -133,16 +124,6 @@ class ModelWrapper(LightningModule):
     
     This wrapper provides a flexible interface for training, validation, and testing different model architectures
     while maintaining consistent logging and optimization strategies.
-    
-    Attributes:
-        model (nn.Module): The underlying model architecture
-        learning_rate (float): Learning rate for optimization
-        weight_decay (float): Weight decay for optimization
-        warmup_steps (int): Number of warmup steps for learning rate scheduling
-        finetune (bool): Whether to use fine-tuning mode
-        alpha (float): Weight for count loss
-        beta (float): Weight for profile loss
-        metrics (Dict[str, List[float]]): Dictionary to store metrics during training
     """
 
     def __init__(
@@ -154,10 +135,6 @@ class ModelWrapper(LightningModule):
         
         Args:
             model: The underlying model architecture
-            learning_rate: Learning rate for optimization
-            weight_decay: Weight decay for optimization
-            warmup_steps: Number of warmup steps for learning rate scheduling
-            finetune: Whether to use fine-tuning mode
             alpha: Weight for count loss
             beta: Weight for profile loss
             **kwargs: Additional arguments to be passed to the model
@@ -165,6 +142,7 @@ class ModelWrapper(LightningModule):
         
         super().__init__()
         self.alpha = args.alpha
+        # TODO where is this set? And why isnt this just 1-alpha?
         self.beta = args.beta
         self.verbose = args.verbose
         
@@ -214,30 +192,6 @@ class ModelWrapper(LightningModule):
 
     def _step(self, batch, batch_idx, mode='train'):
         raise NotImplementedError("Subclasses must implement this method")
-    
-    def init_bias(self, bias, dataloader=None, verbose=False, device=1):
-        print(f"Loading bias model from {bias}")
-        self.model.bias = BPNet.from_keras(bias, name='bias')
-        # Freeze the bias model
-        self.model.bias.eval() 
-        for param in self.model.bias.parameters():
-            param.requires_grad = False
-
-        if dataloader is not None:
-            self.model.bias = adjust_bias_model_logcounts(self.model.bias, dataloader, verbose=verbose, device=device)
-
-    def init_chrombpnet_wo_bias(self, chrombpnet_wo_bias):
-        print(f"Loading chrombpnet_wo_bias model from {chrombpnet_wo_bias}")
-        if chrombpnet_wo_bias.endswith('.h5'):
-            self.model.conv_tower = BPNet.from_keras(chrombpnet_wo_bias)
-        else:
-            self.model.conv_tower.load_state_dict(torch.load(chrombpnet_wo_bias,map_location=self.device))
-
-        if not self.finetune:
-            print("Freezing the model")
-            self.model.conv_tower.eval()
-            for param in self.model.conv_tower.parameters():
-                param.requires_grad = False
 
     def _predict_on_dataloader(self, dataloader, func, **kwargs):
         outs = []
@@ -334,6 +288,7 @@ class BPNetWrapper(ModelWrapper):
     such as profile and count predictions, and appropriate loss calculations.
     """
 
+    # TODO
     def _step(self, batch, batch_idx, mode='train'):
         x = batch['onehot_seq'] # batch_size x 4 x seq_length
         true_profile = batch['profile'] # batch_size x seq_length
@@ -385,7 +340,7 @@ class ChromBPNetWrapper(BPNetWrapper):
     This wrapper extends the base ModelWrapper to handle ChromBPNet-specific features
     such as chromatin accessibility predictions and appropriate loss calculations.
     """
-    
+
     def __init__(
         self,
         args,
@@ -394,22 +349,38 @@ class ChromBPNetWrapper(BPNetWrapper):
 
         if args.bias_scaled:
             self.init_bias(args.bias_scaled)
-        if args.chrombpnet_wo_bias:
+        if args.chrombpnet_wo_bias is not None:
             self.init_chrombpnet_wo_bias(args.chrombpnet_wo_bias)
+
+    def init_bias(self, bias, dataloader=None, verbose=False, device=1):
+        print(f"Loading bias model from {bias}")
+        self.model.bias = BPNet.from_keras(bias, name='bias')
+        # Freeze the bias model
+        self.model.bias.eval() 
+        for param in self.model.bias.parameters():
+            param.requires_grad = False
+
+        if dataloader is not None:
+            self.model.bias = adjust_bias_model_logcounts(self.model.bias, dataloader, verbose=verbose, device=device)
+
+    def init_chrombpnet_wo_bias(self, chrombpnet_wo_bias):
+        print(f"Loading chrombpnet_wo_bias model from {chrombpnet_wo_bias}")
+        if chrombpnet_wo_bias.endswith('.h5'):
+            self.model.conv_tower = BPNet.from_keras(chrombpnet_wo_bias)
+        else:
+            self.model.conv_tower.load_state_dict(torch.load(chrombpnet_wo_bias, map_location=self.device))
+
+        # TODO I think finetune is not defined?
+        if not self.finetune:
+            print("Freezing the model")
+            self.model.conv_tower.eval()
+            for param in self.model.conv_tower.parameters():
+                param.requires_grad = False
 
 def create_model_wrapper(
     args,
-    **kwargs
 ) -> ModelWrapper:
     """Factory function to create appropriate model wrapper.
-    
-    Args:
-        model_type: Type of model ('bpnet', 'chrombpnet')
-        config: Model configuration
-        **kwargs: Additional arguments to be passed to the wrapper
-
-    Returns:
-        Appropriate model wrapper instance
     """
     model_type = args.model_type.lower()
     if model_type == 'bpnet':
@@ -437,17 +408,18 @@ def load_pretrained_model(args):
 
     return model_wrapper
 
-if __name__ == '__main__':
-    args = argparse.ArgumentParser()
-    args.add_argument('--model_type', type=str, default='chrombpnet')
-    args.add_argument('--alpha', type=float, default=1.0)
-    args = args.parse_args()
+# not sure what the point of this is. TODO remove
+# if __name__ == '__main__':
+#     args = argparse.ArgumentParser()
+#     args.add_argument('--model_type', type=str, default='chrombpnet')
+#     args.add_argument('--alpha', type=float, default=1.0)
+#     args = args.parse_args()
 
-    model_wrapper = create_model_wrapper(args.model_type, args)
-    x = torch.randn(1, 4, 2114)
-    batch = {
-        'onehot_seq': x,
-        'profile': torch.randn(1, 1000),
-    }
-    loss = model_wrapper._step(batch, 0, mode='train')
-    print(loss)
+#     model_wrapper = create_model_wrapper(args.model_type, args)
+#     x = torch.randn(1, 4, 2114)
+#     batch = {
+#         'onehot_seq': x,
+#         'profile': torch.randn(1, 1000),
+#     }
+#     loss = model_wrapper._step(batch, 0, mode='train')
+#     print(loss)

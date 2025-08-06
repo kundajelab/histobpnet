@@ -41,6 +41,7 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
                        help='Chromosome type to analyze (e.g., train, val, test, all)')
     parser.add_argument('--model_type', type=str, default='chrombpnet',
                        help='Type of model to use')
+    # TODO later: is this actually used anywhere?
     parser.add_argument('--alpha', type=float, default=1,
                        help='Weight for count loss (profile loss will be weighted as 1-alpha).')
     # TODO what s bias_scaled as opposed to regular bias model?
@@ -48,10 +49,13 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
                        help='Path to bias scaled model')
     parser.add_argument('--adjust_bias', action='store_true',
                        help='Adjust bias model')
-    # parser.add_argument('--chrombpnet_wo_bias', type=str, default=None,
-    #                    help='ChromBPNet model without bias')
-    # parser.add_argument('--verbose', action='store_true',
-    #                    help='Verbose output')
+    parser.add_argument('--chrombpnet_wo_bias', type=str, default=None,
+                       help='ChromBPNet model without bias')
+    # valeh: btw some of these args are really hard to find what/where they're used for
+    # in the code -- for example this is used in model_wrappers.py but it's not obvious
+    # to find that out...
+    parser.add_argument('--verbose', action='store_true',
+                       help='Verbose output')
     
     # Add model-specific arguments
     ChromBPNetConfig.add_argparse_args(parser)
@@ -130,10 +134,10 @@ def train(args, output_dir: str, logger):
     logger.add_to_log(f'alpha: {args.alpha}')
 
     datamodule = DataModule(data_config)
-    # STOPPED HERE
     # what is this for? -> loss weighting, see model_wrappers.py
     args.alpha = datamodule.median_count / 10
     model = create_model_wrapper(args)
+    # STOPPED HERE
     if args.adjust_bias:
         adjust_bias_model_logcounts(model.model.bias, datamodule.negative_dataloader())
 

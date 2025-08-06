@@ -33,7 +33,7 @@ class DataModule(L.LightningDataModule):
     
     The module implements different sampling strategies for training, validation and testing:
     - Train: peaks + negative_sampling_ratio (0.1) of negatives, sampled each epoch
-    - Val: peaks + negatives_sampling_ratio (1) of negatives, sampled once and fixed
+    - Val: peaks + negative_sampling_ratio (1) of negatives, sampled once and fixed
     - Test: peaks + negatives, no sampling
     
     Attributes:
@@ -189,38 +189,43 @@ class DataModule(L.LightningDataModule):
     def median_count(self):
         import pyBigWig
         # Calculate median count to get weight of count loss
-        self.train_val_subsampled = concat_peaks_and_subsampled_negatives(self.train_val, negative_sampling_ratio=self.config.negative_sampling_ratio)
+        # valeh: I dont fully understand the logic here (ie why use the median to determine the weight)
+        self.train_val_subsampled = concat_peaks_and_subsampled_negatives(
+            self.train_val,
+            negative_sampling_ratio=self.config.negative_sampling_ratio
+        )
         counts_subsampled = get_cts(self.train_val_subsampled, pyBigWig.open(self.config.bigwig), self.config.out_window).sum(-1)
         return np.median(counts_subsampled)
 
-    def train_dataloader(self):
-        # TODO: consider removing this since it is already called from the ctor of train_dataset...
-        self.train_dataset.crop_revcomp_data()
+    # def train_dataloader(self):
+    #     # TODO: consider removing this since it is already called from the ctor of train_dataset...
+    #     self.train_dataset.crop_revcomp_data()
         
-        return torch.utils.data.DataLoader(
-            self.train_dataset, 
-            batch_size=self.config.batch_size,
-            shuffle=True, 
-            drop_last=False,
-            num_workers=self.config.num_workers, 
-        )
+    #     return torch.utils.data.DataLoader(
+    #         self.train_dataset, 
+    #         batch_size=self.config.batch_size,
+    #         shuffle=True, 
+    #         drop_last=False,
+    #         num_workers=self.config.num_workers, 
+    #     )
 
-    def val_dataloader(self):
-        return torch.utils.data.DataLoader(
-            self.val_dataset, 
-            batch_size=self.config.batch_size, 
-            shuffle=False, 
-            num_workers=self.config.num_workers, 
-        )
+    # def val_dataloader(self):
+    #     return torch.utils.data.DataLoader(
+    #         self.val_dataset, 
+    #         batch_size=self.config.batch_size, 
+    #         shuffle=False, 
+    #         num_workers=self.config.num_workers, 
+    #     )
     
-    def test_dataloader(self):
-        return torch.utils.data.DataLoader(
-            self.test_dataset, 
-            batch_size=self.config.batch_size, 
-            shuffle=False, 
-            num_workers=self.config.num_workers, 
-        )
+    # def test_dataloader(self):
+    #     return torch.utils.data.DataLoader(
+    #         self.test_dataset, 
+    #         batch_size=self.config.batch_size, 
+    #         shuffle=False, 
+    #         num_workers=self.config.num_workers, 
+    #     )
 
+    # TODO
     def negative_dataloader(self):
         self.negative_dataset = self.dataset_class(
             peak_regions=self.negatives,
@@ -243,6 +248,7 @@ class DataModule(L.LightningDataModule):
             num_workers=self.config.num_workers, 
         )
 
+    # TODO
     def chrom_dataloader(self, chrom='chr1', negative_sampling_ratio=-1):
         dataset = self.chrom_dataset(chrom=chrom, negative_sampling_ratio=negative_sampling_ratio)
         return torch.utils.data.DataLoader(
@@ -252,6 +258,7 @@ class DataModule(L.LightningDataModule):
             num_workers=self.config.num_workers,
         ), dataset
 
+    # TODO
     def chrom_dataset(self, chrom='chr1', negative_sampling_ratio=-1):
         if isinstance(chrom, str):
             if chrom in ['train', 'val', 'test']:
@@ -283,6 +290,7 @@ class DataModule(L.LightningDataModule):
         )
         return dataset
 
+# TODO
 class ChromBPNetDataset(torch.utils.data.Dataset):
     """Generator for genomic sequence data with random cropping and reverse complement augmentation.
     

@@ -1,9 +1,7 @@
-# Author: Lei Xiong <jsxlei@gmail.com>
-
 import torch.nn as nn
 from histobpnet.model.bpnet import BPNet
 
-# adapt from BPNet in bpnet-lite, credit goes to Jacob Schreiber <jmschreiber91@gmail.com>
+# adapted from BPNet in bpnet-lite, credit goes to Jacob Schreiber <jmschreiber91@gmail.com>
 class ChromBPNet(nn.Module):
     """A ChromBPNet model.
 
@@ -19,29 +17,12 @@ class ChromBPNet(nn.Module):
     the bias dominates, and an accessibility model that is subsequently trained
     using a frozen version of the bias model. The bias model learns to remove
     the enzyme bias so that the accessibility model can learn real motifs.
-
-    Parameters
-    ----------
-    bias: torch.nn.Module 
-        This model takes in sequence and outputs the shape one would expect in 
-        ATAC-seq data due to Tn5 bias alone. This is usually a BPNet model
-        from the bpnet-lite repo that has been trained on GC-matched non-peak
-        regions.
-
-    accessibility: torch.nn.Module
-        This model takes in sequence and outputs the accessibility one would 
-        expect due to the components of the sequence, but also takes in a cell 
-        representation which modifies the parameters of the model, hence, 
-        "dynamic." This model is usually a DynamicBPNet model, defined below.
-
-    name: str
-        The name to prepend when saving the file.
     """
 
-    def __init__(self, 
+    def __init__(
+        self, 
         config,
-        **kwargs
-        ):
+    ):
         super().__init__()
 
         self.model = BPNet(        
@@ -56,34 +37,31 @@ class ChromBPNet(nn.Module):
             count_output_bias=config.count_output_bias, 
         )
 
-        self.bias = BPNet(out_dim=config.out_dim, n_layers=4, n_filters=128)
+        self.bias = BPNet(
+            out_dim=config.out_dim,
+            n_layers=4,
+            n_filters=128
+        )
 
         self._log = _Log()
         self._exp1 = _Exp()
         self._exp2 = _Exp()
 
-        self.n_control_tracks = config.n_control_tracks
-
-    def forward(self, x, **kwargs):
+    def forward(self, x):
         """A forward pass through the network.
 
         This function is usually accessed through calling the model, e.g.
         doing `model(x)`. The method defines how inputs are transformed into
         the outputs through interactions with each of the layers.
 
-
         Parameters
         ----------
-        x: torch.tensor, shape=(-1, 4, 2114)
+        x: torch.tensor, shape=(batch_size, 4, 2114)
             A one-hot encoded sequence tensor.
-
-        X_ctl: ignore
-            An ignored parameter for consistency with attribution functions.
-
 
         Returns
         -------
-        y_profile: torch.tensor, shape=(-1, 1000)
+        y_profile: torch.tensor, shape=(batch_size, 1000)
             The predicted logit profile for each example. Note that this is not
             a normalized value.
         """

@@ -28,26 +28,6 @@ class BPNet(torch.nn.Module):
     from 2 followed by concatenation with the log1p of the sum of the
     stranded control tracks and then run through a dense layer.
 
-    This implementation differs from the original BPNet implementation in
-    two ways:
-
-    (1) The model concatenates stranded control tracks for profile
-    prediction as opposed to adding the two strands together and also then
-    smoothing that track 
-
-    (2) The control input for the count prediction task is the log1p of
-    the strand-wise sum of the control tracks, as opposed to the raw
-    counts themselves.
-
-    (3) A single log softmax is applied across both strands such that
-    the logsumexp of both strands together is 0. Put another way, the
-    two strands are concatenated together, a log softmax is applied,
-    and the MNLL loss is calculated on the concatenation. 
-
-    (4) The count prediction task is predicting the total counts across
-    both strands. The counts are then distributed across strands according
-    to the single log softmax from 3.
-
     Note that this model is also used as components in the ChromBPNet model,
     as both the bias model and the accessibility model. Both components are
     the same BPNet architecture but trained on different loci.
@@ -63,15 +43,12 @@ class BPNet(torch.nn.Module):
 
     n_outputs: int, optional
         The number of profile outputs from the model. Generally either 1 or 2 
-        depending on if the data is unstranded or stranded. Default is 2.
+        depending on if the data is unstranded or stranded. Default is 1.
 
     n_control_tracks: int, optional
         The number of control tracks to feed into the model. When predicting
         TFs, this is usually 2. When predicting accessibility, this is usually
-        0. When 0, this input is removed from the model. Default is 2.
-
-    alpha: float, optional
-        The weight to put on the count loss.
+        0. When 0, this input is removed from the model. Default is 0.
 
     profile_output_bias: bool, optional
         Whether to include a bias term in the final profile convolution.
@@ -86,11 +63,6 @@ class BPNet(torch.nn.Module):
     name: str or None, optional
         The name to save the model to during training.
 
-    trimming: int or None, optional
-        The amount to trim from both sides of the input window to get the
-        output window. This value is removed from both sides, so the total
-        number of positions removed is 2*trimming.
-
     verbose: bool, optional
         Whether to display statistics during training. Setting this to False
         will still save the file at the end, but does not print anything to
@@ -99,18 +71,18 @@ class BPNet(torch.nn.Module):
 
     def __init__(
         self, 
-        out_dim=1000,
-        n_filters=64, 
-        n_layers=8, 
-        rconvs_kernel_size=3,
-        conv1_kernel_size=21,
-        profile_kernel_size=75,
-        n_outputs=1, 
-        n_control_tracks=0, 
-        profile_output_bias=True, 
-        count_output_bias=True, 
-        name=None, 
-        verbose=False,
+        out_dim = 1000,
+        n_filters: int = 64, 
+        n_layers: int = 8, 
+        rconvs_kernel_size: int = 3,
+        conv1_kernel_size: int = 21,
+        profile_kernel_size: int = 75,
+        n_outputs: int = 1,
+        n_control_tracks: int = 0,
+        profile_output_bias: bool = True,
+        count_output_bias: bool = True,
+        name: str = None,
+        verbose: bool = True,
     ):
         super().__init__()
 
@@ -124,13 +96,20 @@ class BPNet(torch.nn.Module):
         self.name = name or "bpnet.{}.{}".format(n_filters, n_layers)
 
         # first convolution without dilation
+        # args are: # in_channels, out_channels, kernel_size, padding
+        # padding='valid' means no padding, so the output will be smaller than input
         self.iconv = torch.nn.Conv1d(4, n_filters, kernel_size=conv1_kernel_size, padding='valid')
         self.irelu = torch.nn.ReLU()
 
         # residual dilated convolutions
         self.rconvs = torch.nn.ModuleList([
-            torch.nn.Conv1d(n_filters, n_filters, kernel_size=rconvs_kernel_size, padding='valid', 
-                dilation=2**i) for i in range(1, self.n_layers+1)
+            torch.nn.Conv1d(
+                n_filters,
+                n_filters,
+                kernel_size=rconvs_kernel_size,
+                padding='valid', 
+                dilation=2**i
+            ) for i in range(1, self.n_layers+1)
         ])
 
         self.rrelus = torch.nn.ModuleList([
@@ -138,24 +117,21 @@ class BPNet(torch.nn.Module):
         ])
 
         # profile prediction
+        # TODO what's n_control_tracks for?
         self.fconv = torch.nn.Conv1d(n_filters+n_control_tracks, n_outputs, 
             kernel_size=profile_kernel_size, padding='valid', bias=profile_output_bias)
         
         # count prediction
         n_count_control = 1 if n_control_tracks > 0 else 0
         self.global_avg_pool = torch.nn.AdaptiveAvgPool1d(1)
-        self.linear = torch.nn.Linear(n_filters+n_count_control, 1, 
-            bias=count_output_bias)
+        self.linear = torch.nn.Linear(
+            n_filters+n_count_control,
+            1,
+            bias=count_output_bias
+        )
 
     def forward(self, x, x_ctl=None):
         """A forward pass of the model.
-
-        This method takes in a nucleotide sequence x, a corresponding
-        per-position value from a control track, and a per-locus value
-        from the control track and makes predictions for the profile 
-        and for the counts. This per-locus value is usually the
-        log(sum(X_ctl_profile)+1) when the control is an experimental
-        read track but can also be the -output from another model.
 
         Parameters
         ----------
@@ -168,7 +144,7 @@ class BPNet(torch.nn.Module):
 
         Returns
         -------
-        pred_profile: torch.tensor, shape=(batch_size, n_strands, out_length)
+        pred_profile: torch.tensor, shape=(batch_size, n_outputs, out_length)
             The output predictions for each strand trimmed to the output
             length.
         pred_count: torch.tensor, shape=(batch_size, 1)
@@ -177,11 +153,13 @@ class BPNet(torch.nn.Module):
             x = x.permute(0, 2, 1)
         x = self.get_embs_after_crop(x)
 
-        if self.verbose: print(f'trunk shape: {x.shape}')
+        if self.verbose:
+            print(f'trunk shape: {x.shape}')
 
         if x_ctl is not None:
             crop_size = (x_ctl.shape[2] - x.shape[2]) // 2
-            if self.verbose: print(f'crop_size: {crop_size}')
+            if self.verbose:
+                print(f'crop_size: {crop_size}')
             if crop_size > 0:
                 x_ctl = x_ctl[:, :, crop_size:-crop_size]
             else:
@@ -197,6 +175,7 @@ class BPNet(torch.nn.Module):
         for i in range(self.n_layers):
             conv_x = self.rrelus[i](self.rconvs[i](x))
             crop_len = (x.shape[2] - conv_x.shape[2]) // 2
+            # TODO assert crop_len > 0 since it should always be true
             if crop_len > 0:
                 x = x[:, :, crop_len:-crop_len]
             x = torch.add(x, conv_x)
@@ -231,6 +210,7 @@ class BPNet(torch.nn.Module):
         pred_count = self.linear(pred_count)
         return pred_count
 
+    # TODO
     @classmethod
     def from_keras(cls, filename, name='chrombpnet'):
         """Loads a model from ChromBPNet TensorFlow format.
