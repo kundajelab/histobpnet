@@ -197,33 +197,33 @@ class DataModule(L.LightningDataModule):
         counts_subsampled = get_cts(self.train_val_subsampled, pyBigWig.open(self.config.bigwig), self.config.out_window).sum(-1)
         return np.median(counts_subsampled)
 
-    # def train_dataloader(self):
-    #     # TODO: consider removing this since it is already called from the ctor of train_dataset...
-    #     self.train_dataset.crop_revcomp_data()
+    def train_dataloader(self):
+        # TODO: consider removing this since it is already called from the ctor of train_dataset...
+        self.train_dataset.crop_revcomp_data()
         
-    #     return torch.utils.data.DataLoader(
-    #         self.train_dataset, 
-    #         batch_size=self.config.batch_size,
-    #         shuffle=True, 
-    #         drop_last=False,
-    #         num_workers=self.config.num_workers, 
-    #     )
+        return torch.utils.data.DataLoader(
+            self.train_dataset, 
+            batch_size=self.config.batch_size,
+            shuffle=True, 
+            drop_last=False,
+            num_workers=self.config.num_workers, 
+        )
 
-    # def val_dataloader(self):
-    #     return torch.utils.data.DataLoader(
-    #         self.val_dataset, 
-    #         batch_size=self.config.batch_size, 
-    #         shuffle=False, 
-    #         num_workers=self.config.num_workers, 
-    #     )
+    def val_dataloader(self):
+        return torch.utils.data.DataLoader(
+            self.val_dataset, 
+            batch_size=self.config.batch_size, 
+            shuffle=False, 
+            num_workers=self.config.num_workers, 
+        )
     
-    # def test_dataloader(self):
-    #     return torch.utils.data.DataLoader(
-    #         self.test_dataset, 
-    #         batch_size=self.config.batch_size, 
-    #         shuffle=False, 
-    #         num_workers=self.config.num_workers, 
-    #     )
+    def test_dataloader(self):
+        return torch.utils.data.DataLoader(
+            self.test_dataset, 
+            batch_size=self.config.batch_size, 
+            shuffle=False, 
+            num_workers=self.config.num_workers, 
+        )
 
     # TODO
     def negative_dataloader(self):

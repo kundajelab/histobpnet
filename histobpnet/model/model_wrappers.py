@@ -288,8 +288,10 @@ class BPNetWrapper(ModelWrapper):
     such as profile and count predictions, and appropriate loss calculations.
     """
 
-    # TODO
-    def _step(self, batch, batch_idx, mode='train'):
+    # TODO walk through this
+    def _step(self, batch, batch_idx, mode: str = 'train'):
+        assert mode in ['train', 'val', 'test', 'predict'], "Invalid mode. Must be one of ['train', 'val', 'test', 'predict']"
+
         x = batch['onehot_seq'] # batch_size x 4 x seq_length
         true_profile = batch['profile'] # batch_size x seq_length
 
@@ -314,7 +316,14 @@ class BPNetWrapper(ModelWrapper):
         self.metrics[mode]['targets'].append(true_counts)
         with torch.no_grad():
             profile_pearson = pearson_corr(y_profile.softmax(-1), true_profile).mean()
-            self.log_dict({f"{mode}_profile_pearson": profile_pearson}, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+            self.log_dict(
+                {f"{mode}_profile_pearson": profile_pearson},
+                on_step=False,
+                on_epoch=True,
+                prog_bar=True,
+                logger=True,
+                sync_dist=True
+            )
 
         profile_loss = multinomial_nll(y_profile, true_profile)
         count_loss = F.mse_loss(y_count, true_counts)
@@ -397,6 +406,7 @@ def load_pretrained_model(args):
             model_wrapper = ChromBPNetWrapper.load_from_checkpoint(checkpoint)
         elif checkpoint.endswith('.pt'):
             model_wrapper = ChromBPNetWrapper(args)
+            # TODO why map location is cpu?
             model_wrapper.model.model.load_state_dict(torch.load(checkpoint, map_location='cpu'))
         elif checkpoint.endswith('.h5'):  
             model_wrapper = ChromBPNetWrapper(args)

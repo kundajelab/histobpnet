@@ -53,7 +53,8 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
                        help='ChromBPNet model without bias')
     # valeh: btw some of these args are really hard to find what/where they're used for
     # in the code -- for example this is used in model_wrappers.py but it's not obvious
-    # to find that out...
+    # to find that out... TODO move some of these "not-so-common" args to the model config
+    # and/or sub-command specific configs
     parser.add_argument('--verbose', action='store_true',
                        help='Verbose output')
     

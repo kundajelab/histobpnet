@@ -26,21 +26,21 @@ class ChromBPNet(nn.Module):
         super().__init__()
 
         self.model = BPNet(        
-            out_dim=config.out_dim,
-            n_filters=config.n_filters, 
-            n_layers=config.n_layers, 
-            conv1_kernel_size=config.conv1_kernel_size,
-            profile_kernel_size=config.profile_kernel_size,
-            n_outputs=config.n_outputs, 
-            n_control_tracks=config.n_control_tracks, 
-            profile_output_bias=config.profile_output_bias, 
-            count_output_bias=config.count_output_bias, 
+            out_dim = config.out_dim,
+            n_filters = config.n_filters, 
+            n_layers = config.n_layers, 
+            conv1_kernel_size = config.conv1_kernel_size,
+            profile_kernel_size = config.profile_kernel_size,
+            n_outputs = config.n_outputs, 
+            n_control_tracks = config.n_control_tracks, 
+            profile_output_bias = config.profile_output_bias, 
+            count_output_bias = config.count_output_bias, 
         )
 
         self.bias = BPNet(
-            out_dim=config.out_dim,
-            n_layers=4,
-            n_filters=128
+            out_dim = config.out_dim,
+            n_layers = 4,
+            n_filters = 128
         )
 
         self._log = _Log()
@@ -69,6 +69,7 @@ class ChromBPNet(nn.Module):
         bias_profile, bias_counts = self.bias(x)
 
         y_profile = acc_profile + bias_profile
+        # combine the two logit outputs via log-sum-exp
         y_counts = self._log(self._exp1(acc_counts) + self._exp2(bias_counts))
         
         # DO NOT SQUEEZE y_counts, as it is needed for running deep_lift_shap

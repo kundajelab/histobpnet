@@ -117,7 +117,7 @@ class BPNet(torch.nn.Module):
         ])
 
         # profile prediction
-        # TODO what's n_control_tracks for?
+        # TODO what's n_control_tracks for? remove if not needed
         self.fconv = torch.nn.Conv1d(n_filters+n_control_tracks, n_outputs, 
             kernel_size=profile_kernel_size, padding='valid', bias=profile_output_bias)
         
@@ -202,7 +202,6 @@ class BPNet(torch.nn.Module):
         return pred_profile
 
     def count_head(self, x, x_ctl=None):
-        # pred_count = torch.mean(x, dim=2)
         pred_count = self.global_avg_pool(x).squeeze(-1)
         if x_ctl is not None:
             x_ctl = torch.sum(x_ctl, dim=(1, 2)).unsqueeze(-1)
@@ -210,7 +209,6 @@ class BPNet(torch.nn.Module):
         pred_count = self.linear(pred_count)
         return pred_count
 
-    # TODO
     @classmethod
     def from_keras(cls, filename, name='chrombpnet'):
         """Loads a model from ChromBPNet TensorFlow format.
@@ -233,7 +231,6 @@ class BPNet(torch.nn.Module):
         """
         if filename.endswith('.h5'):
             import h5py
-
             h5 = h5py.File(filename, "r")
             w = h5['model_weights']
         else:
