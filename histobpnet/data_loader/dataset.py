@@ -47,10 +47,10 @@ class DataModule(L.LightningDataModule):
         test_chroms: List of chromosomes used for testing
     """
     
-    def __init__(self, config):
+    def __init__(self, config, args):
         """Initialize the DataModule.
         
-        Args:
+        config:
             config: Configuration object containing data loading parameters
         """
         super().__init__()
@@ -61,6 +61,13 @@ class DataModule(L.LightningDataModule):
             self.dataset_class = ChromBPNetDataset
         else:
             raise NotImplementedError(f'Unsupported data type: {self.config.data_type}')
+        
+        # make sure DataLoader's batch_size is per GPU, not global
+        # see https://lightning.ai/docs/pytorch/stable/accelerators/gpu_faq.html#how-should-i-adjust-the-learning-rate-when-using-multiple-devices
+        # That means we need to adjust the batch_size depending on the
+        # number of devices here, otherwise batch_size will be a function
+        # of n_devices which is not what we want
+        self.effective_batch_size = config.batch_size // len(args.gpu)
 
         # Load and process data
         self._load_regions()
@@ -142,7 +149,6 @@ class DataModule(L.LightningDataModule):
                 peak_regions=train_peaks,
                 nonpeak_regions=train_nonpeaks,
                 genome_fasta=config.fasta,
-                batch_size=config.batch_size,
                 inputlen=config.in_window,                                        
                 outputlen=config.out_window,
                 max_jitter=config.shift,
@@ -156,7 +162,6 @@ class DataModule(L.LightningDataModule):
                 peak_regions=val_peaks,
                 nonpeak_regions=val_nonpeaks,
                 genome_fasta=config.fasta,
-                batch_size=config.batch_size,
                 inputlen=config.in_window,                                        
                 outputlen=config.out_window,
                 max_jitter=0,
@@ -172,7 +177,6 @@ class DataModule(L.LightningDataModule):
                 peak_regions=test_peaks,
                 nonpeak_regions=test_nonpeaks,  
                 genome_fasta=config.fasta,
-                batch_size=config.batch_size,
                 inputlen=config.in_window,                                        
                 outputlen=config.out_window,
                 max_jitter=0,
@@ -203,7 +207,7 @@ class DataModule(L.LightningDataModule):
         
         return torch.utils.data.DataLoader(
             self.train_dataset, 
-            batch_size=self.config.batch_size,
+            batch_size=self.effective_batch_size,
             shuffle=True, 
             drop_last=False,
             num_workers=self.config.num_workers, 
@@ -212,7 +216,7 @@ class DataModule(L.LightningDataModule):
     def val_dataloader(self):
         return torch.utils.data.DataLoader(
             self.val_dataset, 
-            batch_size=self.config.batch_size, 
+            batch_size=self.effective_batch_size, 
             shuffle=False, 
             num_workers=self.config.num_workers, 
         )
@@ -220,7 +224,7 @@ class DataModule(L.LightningDataModule):
     def test_dataloader(self):
         return torch.utils.data.DataLoader(
             self.test_dataset, 
-            batch_size=self.config.batch_size, 
+            batch_size=self.effective_batch_size, 
             shuffle=False, 
             num_workers=self.config.num_workers, 
         )
@@ -231,7 +235,6 @@ class DataModule(L.LightningDataModule):
             peak_regions=self.negatives,
             nonpeak_regions=None,
             genome_fasta=self.config.fasta,
-            batch_size=self.config.batch_size,
             inputlen=self.config.in_window,
             outputlen=self.config.out_window,
             max_jitter=0,
@@ -278,7 +281,6 @@ class DataModule(L.LightningDataModule):
             peak_regions=peaks,
             nonpeak_regions=nonpeaks,
             genome_fasta=self.config.fasta,
-            batch_size=self.config.batch_size,
             inputlen=self.config.in_window,
             outputlen=self.config.out_window,
             max_jitter=0,
@@ -303,7 +305,9 @@ class ChromBPNetDataset(torch.utils.data.Dataset):
         peak_regions, 
         nonpeak_regions, 
         genome_fasta, 
-        batch_size, 
+        # a Dataset just know how many samples, and how to get one (__getitem__),
+        # it does not handle batching or shuffling — that's the DataLoader's job.
+        # batch_size, 
         inputlen, 
         outputlen, 
         max_jitter, 
@@ -320,7 +324,6 @@ class ChromBPNetDataset(torch.utils.data.Dataset):
             peak_regions: DataFrame containing peak regions
             nonpeak_regions: DataFrame containing non-peak regions
             genome_fasta: Path to genome FASTA file
-            batch_size: Size of batches
             inputlen: Length of input sequences
             outputlen: Length of output sequences
             max_jitter: Maximum jitter for random cropping
@@ -345,7 +348,6 @@ class ChromBPNetDataset(torch.utils.data.Dataset):
         self.negative_sampling_ratio = negative_sampling_ratio
         self.inputlen = inputlen
         self.outputlen = outputlen
-        self.batch_size = batch_size
         self.add_revcomp = add_revcomp
         self.return_coords = return_coords
         self.shuffle_at_epoch_start = shuffle_at_epoch_start

@@ -411,6 +411,7 @@ def load_pretrained_model(args):
         elif checkpoint.endswith('.h5'):  
             model_wrapper = ChromBPNetWrapper(args)
             # For Keras H5 files, load using the from_keras method
+            # TODO later I think this can only load a chrombpnet_wo_bias, not a full chrombpnet...
             print(f"Loading chrombpnet_wo_bias model from {checkpoint}")
             model_wrapper.model.model = BPNet.from_keras(checkpoint)
     else:

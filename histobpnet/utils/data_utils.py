@@ -59,7 +59,7 @@ def load_region_df(regions_bed, chrom_sizes=None, in_window=2114, shift=0, is_pe
         # assume column 0 is chr, column 9 is the summit, column 1 is start, column 2 is end
         flank_length = in_window // 2 + shift
         chrom_lengths = df.iloc[:, 0].map(lambda chrom: int(chrom_sizes.get(chrom, float('inf'))))
-        assert (df.shape[1] < 10), "DataFrame should have at least 10 columns after expanding to 10 columns."
+        assert (df.shape[1] >= 10), "DataFrame should have at least 10 columns after expanding to 10 columns."
         center = (df.iloc[:, 9] + df.iloc[:, 1])
         filtered_df = df[
             (center - flank_length > 0) &

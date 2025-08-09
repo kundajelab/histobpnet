@@ -28,6 +28,7 @@ class DataConfig:
         saved_data: str = None,
         fasta: str = "",
         chrom_sizes: str = "",
+        fold: int = 0,
         fold_path: str = "",
         in_window: int = 2114,
         out_window: int = 1000,
@@ -69,6 +70,7 @@ class DataConfig:
         self.batch_size = batch_size    
         self.num_workers = num_workers
         self.debug = debug
+        self.fold = fold
         # this should be in validation functions but we need it here to load the chrom, so oh well
         assert os.path.isfile(fold_path) and fold_path.endswith('.json'), f"Fold path must be a valid JSON file: {fold_path}"
         splits_dict = json.load(open(fold_path))
