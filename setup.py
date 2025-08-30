@@ -17,14 +17,13 @@ setup(
         "intervaltree",
         "tqdm",
         "wandb",
-        # "yaml",
         "PyYAML",
         "accelerate",
         "matplotlib",
         "enformer_pytorch",
         "tangermeme",
-        # "session-info", # for debug logging (referenced from the issue template)
         "polars",
-    ], # Add dependencies here
+        "toolbox @ git+https://github.com/watiss/toolbox.git@main"
+    ],
 )
 

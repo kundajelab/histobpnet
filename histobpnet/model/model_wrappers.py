@@ -418,19 +418,3 @@ def load_pretrained_model(args):
         model_wrapper = ChromBPNetWrapper(args)
 
     return model_wrapper
-
-# not sure what the point of this is. TODO remove
-# if __name__ == '__main__':
-#     args = argparse.ArgumentParser()
-#     args.add_argument('--model_type', type=str, default='chrombpnet')
-#     args.add_argument('--alpha', type=float, default=1.0)
-#     args = args.parse_args()
-
-#     model_wrapper = create_model_wrapper(args.model_type, args)
-#     x = torch.randn(1, 4, 2114)
-#     batch = {
-#         'onehot_seq': x,
-#         'profile': torch.randn(1, 1000),
-#     }
-#     loss = model_wrapper._step(batch, 0, mode='train')
-#     print(loss)

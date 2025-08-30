@@ -25,7 +25,6 @@ import matplotlib.pyplot as plt
 def get_parsers():
     parser = argparse.ArgumentParser()
 
-    # TODO later: make sure help messages are correct...
     parser.add_argument('--output_dir', type=str, required=True,
                         help="Output directory to store the results. Will create a subdirectory with instance_id.")
     parser.add_argument('--peaks', type=str, required=True,
@@ -196,8 +195,8 @@ def get_gc_matched_negatives(
     foreground_gc_vals = []
     output_gc_vals = []
     ignored_chroms = []
-    for row in tqdm(peaks.iter_rows(named=True)):
-        chrom, gc_value = row['chrom'], row['gc']
+    for row in tqdm(peaks.iter_rows(named=False), total=peaks.height):
+        chrom, gc_value = row[0], row[3]
 
         chrom_mod = remap_chrom(chrom, splits_dict)
         if chrom_mod == "ignore":
@@ -213,14 +212,19 @@ def get_gc_matched_negatives(
     
         # for every gc value in positive how many negatives to find
         for _ in range(neg_to_pos_ratio):
-            # valeh: I think the block below can be significantly simplified but am skipping that for now
             cur_gc, used_negatives = adjust_gc(chrom_mod, gc_value, negatives, used_negatives)
+            # num_candidates = len(negatives[chrom_mod][cur_gc])
+            # rand_neg_index = random.randint(0, num_candidates - 1)
+            # while rand_neg_index in used_negatives[chrom_mod][cur_gc]:
+            #     cur_gc, used_negatives = adjust_gc(chrom_mod, cur_gc, negatives, used_negatives)
+            #     num_candidates = len(negatives[chrom_mod][cur_gc])
+            #     rand_neg_index=random.randint(0,num_candidates-1)
             num_candidates = len(negatives[chrom_mod][cur_gc])
-            rand_neg_index = random.randint(0, num_candidates - 1)
-            while rand_neg_index in used_negatives[chrom_mod][cur_gc]:
-                cur_gc, used_negatives = adjust_gc(chrom_mod, cur_gc, negatives, used_negatives)
-                num_candidates = len(negatives[chrom_mod][cur_gc])
-                rand_neg_index=random.randint(0,num_candidates-1)
+            used_negatives_set = set(used_negatives[chrom_mod][cur_gc]) # set for faster lookup
+            unused_negatives = [i for i in range(num_candidates) if i not in used_negatives_set]
+            # there must be at least one unused negative, select one randomly
+            assert unused_negatives
+            rand_neg_index = random.choice(unused_negatives)
 
             used_negatives[chrom_mod][cur_gc].append(rand_neg_index)
             n = negatives[chrom_mod][cur_gc][rand_neg_index]
@@ -229,10 +233,14 @@ def get_gc_matched_negatives(
             output_gc_vals.append(cur_gc)
             foreground_gc_vals.append(gc_value)       
   
+    # 44877000
     logger.add_to_log("Following foreground chromosomes {} were ignored since they are not present in the given fold".format(",".join(list(set(ignored_chroms)))))     
-    neg_tuples = pl.DataFrame(neg_tuples)
+    neg_tuples = pl.DataFrame(
+        neg_tuples,
+        schema={"chrom": pl.Utf8, "start": pl.Utf8, "end": pl.Utf8}
+    )
     # neg_tuples.to_csv(output_prefix+".bed", sep='\t', index=False, header=False, quoting=csv.QUOTE_NONE)
-    n_path = os.path.join(output_prefix, "negatives.bed")
+    n_path = os.path.join(output_prefix, "_negatives.bed")
     neg_tuples.write_csv(
         n_path,
         separator="\t",
@@ -279,7 +287,7 @@ def get_gc_content(genome, peaks_bed: str, chrom_sizes, inputlen: int, output_pr
 
     filtered_peaks = 0
     with open(output_prefix + ".bed", 'w') as f:
-        for row in tqdm(data.iter_rows(named=True)):
+        for row in tqdm(data.iter_rows(named=False), total=data.height):
             # narrowPeak format has chrom, start, end in the first 3 columns (0-based)
             chrom=row[0]
             start=row[1]
@@ -331,7 +339,9 @@ def main(instance_id: str):
 
     # prepare candidate negatives
     def get_excluded_regions(region_type: str):
-        assert region_type in ["peaks", "blacklist_regions"], "region_type must be either 'peaks' or 'blacklist_regions'"
+        assert region_type in ["peaks", "blacklist"], "region_type must be either 'peaks' or 'blacklist'"
+        # run bedtools slop to expand/contract each genomic interval in peaks by `flank_size`
+        # while respecting chromosome boundaries defined in `chrom_sizes`, and save result to `output`
         os.system("bedtools slop -i {peaks} -g {chrom_sizes} -b {flank_size} > {output}".format(
             peaks=args_d["peaks"] if region_type == "peaks" else args_d["blacklist_regions"],
             chrom_sizes=args_d["chrom_sizes"],
@@ -345,7 +355,7 @@ def main(instance_id: str):
     if args_d["blacklist_regions"]:
         exclude_blacklist = get_excluded_regions("blacklist")
         exclude_bed = pl.concat([exclude_bed,exclude_blacklist])
-    exclude_bed.to_csv(os.path.join(aux_dir, "exclude_unmerged.bed"), sep="\t", header=False, index=False)
+    exclude_bed.write_csv(os.path.join(aux_dir, "exclude_unmerged.bed"), separator="\t", include_header=False)
 
     # merge the exclude_bed regions
     os.system("bedtools sort -i {inputb} | bedtools merge -i stdin > {output}".format(
@@ -353,7 +363,7 @@ def main(instance_id: str):
         output=os.path.join(aux_dir, "exclude.bed"))
     )
 
-    # the following command will create a bed file with candidate regsions (and their gc content)
+    # the following command will create a bed file with candidate regions (and their gc content)
     # that are not overlapping with the exclude_bed regions
     # it will be used to get gc content and then filter out the ones that are not gc matched
     # to the foreground gc content
@@ -366,8 +376,7 @@ def main(instance_id: str):
 
     # sample negatives that are gc-matched with foreground peaks
     n_path = get_gc_matched_negatives(
-        output_dir,
-        candidate_negatives = os.path.join(aux_dir, "candidates.bed"),
+        os.path.join(aux_dir, "candidates.bed"),
         foreground_gc_bed = os.path.join(aux_dir, "foreground.gc.bed"),
         output_prefix = aux_dir,
         chr_fold_path = args_d["chr_fold_path"],
@@ -385,7 +394,7 @@ def main(instance_id: str):
     negatives[8]="."
     negatives[9]=args_d["inputlen"]//2
     negatives.write_csv(
-        os.path.join(output_dir, "_negatives.bed"),
+        os.path.join(output_dir, "negatives.bed"),
         separator="\t",
         include_header=False,
         include_index=False
@@ -394,8 +403,8 @@ def main(instance_id: str):
     logger.add_to_log("All done!")
 
 if __name__ == '__main__':
-    # TODO
-    raise NotImplementedError("This script is not ready for execution.")
+    # # TODO
+    # raise NotImplementedError("This script is not ready for execution.")
 
     # get the instance id first so we can print it fast, then continue with the rest
     instance_id = get_instance_id()
