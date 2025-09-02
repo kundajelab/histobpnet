@@ -190,6 +190,8 @@ def get_gc_matched_negatives(
     splits_dict = json.load(open(chr_fold_path))
     negatives = make_gc_dict(candidate_negatives, splits_dict, logger)
 
+    logger.add_to_log("Starting loop to find GC-matched negative for each peak...")
+    
     used_negatives = {}
     neg_tuples = []
     foreground_gc_vals = []
@@ -233,11 +235,11 @@ def get_gc_matched_negatives(
             output_gc_vals.append(cur_gc)
             foreground_gc_vals.append(gc_value)       
   
-    # 44877000
     logger.add_to_log("Following foreground chromosomes {} were ignored since they are not present in the given fold".format(",".join(list(set(ignored_chroms)))))     
     neg_tuples = pl.DataFrame(
         neg_tuples,
-        schema={"chrom": pl.Utf8, "start": pl.Utf8, "end": pl.Utf8}
+        schema={"chrom": pl.Utf8, "start": pl.Utf8, "end": pl.Utf8, "gc": pl.Utf8},
+        orient="row"
     )
     # neg_tuples.to_csv(output_prefix+".bed", sep='\t', index=False, header=False, quoting=csv.QUOTE_NONE)
     n_path = os.path.join(output_prefix, "_negatives.bed")
@@ -386,18 +388,17 @@ def main(instance_id: str):
 
     # save the negatives in the final format
     negatives = pl.read_csv(n_path, separator="\t", has_header=False)
-    negatives[3]="."
-    negatives[4]="."
-    negatives[5]="."
-    negatives[6]="."
-    negatives[7]="."
-    negatives[8]="."
-    negatives[9]=args_d["inputlen"]//2
+    # replace 4th col + add 5 new cols of "." + add last col with inputlen//2
+    exprs = (
+        [pl.lit(".").alias(negatives.columns[3])] +
+        [pl.lit(".").alias(f"new_col{i}") for i in range(1, 6)] +
+        [pl.lit(args_d["inputlen"] // 2).alias("last_col")]
+    )
+    negatives = negatives.with_columns(exprs)
     negatives.write_csv(
         os.path.join(output_dir, "negatives.bed"),
         separator="\t",
         include_header=False,
-        include_index=False
     )
 
     logger.add_to_log("All done!")
