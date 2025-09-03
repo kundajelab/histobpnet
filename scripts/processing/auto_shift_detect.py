@@ -1,141 +1,56 @@
-import argparse
-import pyBigWig
-import pyfaidx
 import subprocess
 import pandas as pd
 import numpy as np
 import itertools
 import warnings
-from termcolor import colored
-import os
+from toolbox.logger import SimpleLogger
+import polars as pl
+from typing import Optional
 from modisco.visualization import viz_sequence
-import chrombpnet.training.utils.one_hot as one_hot
-from chrombpnet.data import DefaultDataFile, get_default_data_path
+from histobpnet.utils.general_utils import get_pwms
+from .reads_to_bigwig import (
+    bam_to_tagalign_stream,
+    fragment_to_tagalign_stream,
+    tagalign_stream,
+    stream_filtered_tagaligns,
+)
 
-def parse_args():
-    parser=argparse.ArgumentParser(description="Automatically detect enzyme shift of input BAM/fragment/tagAlign File")
-    parser.add_argument('-g','--genome', required=True, type=str, help="reference genome file")
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument('-ibam', '--input-bam-file', type=str, help="Input BAM file")
-    group.add_argument('-ifrag', '--input-fragment-file', type=str, help="Input fragment file")
-    group.add_argument('-itag', '--input-tagalign-file', type=str, help="Input tagAlign file")
-    parser.add_argument('-d', '--data-type', required=True, type=str, choices=['ATAC', 'DNASE'], help="assay type")
-    parser.add_argument('--ATAC-ref-path', type=str, default=None, help="Path to ATAC reference motifs (ATAC.ref.motifs.txt used by default)")
-    parser.add_argument('--DNASE-ref-path', type=str, default=None, help="Path to DNASE reference motifs (DNASE.ref.motfis.txt used by default)")
-    parser.add_argument('--num-samples', type=int, default=10000, help="Number of reads to sample from BAM/fragment file")
-    args = parser.parse_args()
-    return args
+# adapted from https://github.com/kundajelab/chrombpnet/blob/master/chrombpnet/helpers/preprocessing/auto_shift_detect.py
 
-def ic_scale(pwm):
-    # renormalize just in case
-    pwm = pwm/np.sum(pwm, axis=-1, keepdims=True)
-    return viz_sequence.ic_scale(pwm, background=[.25]*4)
+def sample_reads(
+    input_bam_file: Optional[str],
+    input_fragment_file: Optional[str],
+    input_tagalign_file: Optional[str],
+    num_samples: int,
+    genome_fasta_path: str,
+    logger,
+):
+    if input_bam_file is not None:
+        p1 = bam_to_tagalign_stream(input_bam_file)
+    elif input_fragment_file is not None:
+        p1 = fragment_to_tagalign_stream(input_fragment_file)
+    elif input_tagalign_file is not None:
+        p1 = tagalign_stream(input_tagalign_file)
 
-def convolve(to_scan, longer_seq):
-    # Convolve to_scan matrix against longer_seq matrix
-    vals = []
-    for i in range(len(longer_seq) - len(to_scan) + 1):
-        vals.append(np.sum(to_scan*longer_seq[i:i+len(to_scan)]))
-    return vals
-    
-def stream_filtered_tagaligns(src_tagaligns_stream, genome_file, out_stream):
-    '''
-    Given a tagalign subprocess stream and reference genome file, filters
-    out any reads in chromosomes not included in the reference. Reads in the
-    reference chromosomes are sent to the specified output stream.
-    
-    Returns:
-        Boolean. Indicates whether any reads not in the reference fasta were 
-        detected.
-    '''
-    has_unknown_chroms = False
-    with pyfaidx.Fasta(genome_file) as g:
-        for line in iter(src_tagaligns_stream.stdout.readline, b''):
-            tagalign_chrom = line.decode('utf-8').strip().split('\t')[0]
-            if tagalign_chrom in g.keys():
-                out_stream.stdin.write(line)
-            else:
-                has_unknown_chroms = True
-        src_tagaligns_stream.stdout.close()
-    return has_unknown_chroms
-
-def is_gz_file(filepath):
-    # https://stackoverflow.com/questions/3703276/how-to-tell-if-a-file-is-gzip-compressed
-    with open(filepath, 'rb') as test_f:
-        return test_f.read(2) == b'\x1f\x8b'
-
-def bam_to_tagalign_stream(bam_path):
-    p = subprocess.Popen(["bedtools", "bamtobed", "-i", bam_path], stdout=subprocess.PIPE)
-    return p
-
-def fragment_to_tagalign_stream(fragment_file_path):
-    """
-    Expected format for fragment file: tsv with columns chr, start, end and optionally more columns
-    """
-    frag_is_gz = is_gz_file(fragment_file_path)
-    read_method = "zcat " if frag_is_gz else "cat "
-    cmd = read_method + fragment_file_path + """ | awk -v OFS="\\t" '{print $1,$2,$3,1000,0,"+"; print $1,$2,$3,1000,0,"-"}'"""
-    p = subprocess.Popen([cmd], stdout=subprocess.PIPE, shell=True)
-    return p
-
-def tagalign_stream(tagalign_file_path):
-    """
-    Expected format for tagAlign: tsv with columns chr, start, end, ignored, ignored, strand
-    """
-    ta_is_gz = is_gz_file(tagalign_file_path)
-    p = subprocess.Popen(["zcat" if ta_is_gz else "cat", tagalign_file_path], stdout=subprocess.PIPE)
-    return p
-
-def sample_reads(bam_path, fragment_file_path, tagalign_file_path, num_samples, genome_fasta_path):
-    # only one of bam, fragment, tagalign is not None
-    if bam_path:
-        p1 = bam_to_tagalign_stream(bam_path)
-    elif fragment_file_path:
-        p1 = fragment_to_tagalign_stream(fragment_file_path)
-    elif tagalign_file_path:
-        p1 = tagalign_stream(tagalign_file_path)
-
+    logger.add_to_log(f"Sampling reads from input...")
     # num_samples is per strand, so multiply by 2
     p2 = subprocess.Popen(["shuf", "-n", str(2*num_samples)], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-    has_unknown_chroms = stream_filtered_tagaligns(p1, genome_fasta_path, p2)
+    stream_filtered_tagaligns(p1, genome_fasta_path, p2.stdin)
     output = p2.communicate()[0]
-    
-    if has_unknown_chroms:
-        msg = '!!! WARNING: Input reads contain chromosomes not in the reference' \
-            ' genome fasta provided. Please ensure you are using the correct' \
-            ' reference genome. If you are confident you are using the correct reference' \
-            ' genome, you can safely ignore this message.'
-        warnings.warn(colored(msg, 'red'))
 
-    output = [x.split("\t") for x in output.decode('utf-8').split("\n")[:-1]]
-    reads = pd.DataFrame(output)
-    reads = reads.rename({0:'chr', 1:'start', 2:'end', 3:'x1', 4:'x2', 5:'strand'}, axis=1)
+    logger.add_to_log(f"Saving as strand-specific dataframes....")
+    # "if x" -> If the trailing line is empty (""), it’s dropped.
+    rows = [x.split("\t") for x in output.decode("utf-8").split("\n") if x]
+    reads = pl.DataFrame(
+        rows,
+        schema=["chr", "start", "end", "x1", "x2", "strand"]
+    )
 
-    plus_reads = reads[reads['strand']=="+"].iloc[:,:3]
-    minus_reads = reads[reads['strand']=="-"].iloc[:,:3]
+    # strand-specific subsets
+    plus_reads = reads.filter(pl.col("strand") == "+").select(["chr", "start", "end"])
+    minus_reads = reads.filter(pl.col("strand") == "-").select(["chr", "start", "end"])
 
     return plus_reads, minus_reads
-
-
-def get_pwms(plus_reads, minus_reads, genome_file):
-    plus_seqs = []
-    minus_seqs = []
-    with pyfaidx.Fasta(genome_file) as g:
-        for _, x in plus_reads.iterrows():
-            cur = str(g[x['chr']][int(x['start'])-20:int(x['start'])+20])
-            if len(cur)==40: # observed edge cases in non-canonical chr e.g. chrEBV
-                plus_seqs.append(cur)
-        for _, x in minus_reads.iterrows():
-            cur = str(g[x['chr']][int(x['end'])-20:int(x['end'])+20])
-            if len(cur)==40:
-                minus_seqs.append(cur)
-    
-    plus_pwm = one_hot.dna_to_one_hot(plus_seqs).mean(0)
-    plus_pwm = (plus_pwm/np.sum(plus_pwm, axis=-1, keepdims=True))
-    minus_pwm = one_hot.dna_to_one_hot(minus_seqs).mean(0)
-    minus_pwm = (minus_pwm/np.sum(minus_pwm, axis=-1, keepdims=True))
-
-    return plus_pwm, minus_pwm
 
 def get_ref_pwms(ref_motifs_path):
     """
@@ -143,9 +58,6 @@ def get_ref_pwms(ref_motifs_path):
     Contains motifs one position per line, 4 columns per base tab-separated. First 
     line of each motif starts with ">" followed by name. "_" is used to name motifs 
     and name should end with "_plus" or "_minus".
-
-    For ATAC motifs the reference motifs were constructed using the get_pwms 
-    function on +4/-5 shifted tagalign files and then taking central 20 bases.
     """
     pwms = {'+':{}, '-':{}}
     cur_orient = None
@@ -171,6 +83,56 @@ def get_ref_pwms(ref_motifs_path):
     pwms[cur_orient][cur_motif] = np.array(pwms[cur_orient][cur_motif])
 
     return pwms['+'], pwms['-']
+
+# from https://github.com/kundajelab/tfmodisco/blob/master/modisco/util.py#L492
+def compute_per_position_ic(ppm, background, pseudocount):
+    """Compute information content at each position of ppm.
+
+    Arguments:
+        ppm: should have dimensions of length x alphabet. Entries along the
+            alphabet axis should sum to 1.
+        background: the background base frequencies
+        pseudocount: pseudocount to be added to the probabilities of the ppm
+            to prevent overflow/underflow.
+
+    Returns:
+        total information content at each positon of the ppm.
+    """
+    assert len(ppm.shape)==2
+    assert ppm.shape[1]==len(background), "Make sure the letter axis is the second axis"
+    if (not np.allclose(np.sum(ppm, axis=1), 1.0, atol=1.0e-5)):
+        print("WARNING: Probabilities don't sum to 1 in all the rows; this can"
+              +" be caused by zero-padding. Will renormalize. PPM:\n"
+              +str(ppm)
+              +"\nProbability sums:\n"
+              +str(np.sum(ppm, axis=1)))
+        ppm = ppm/np.sum(ppm, axis=1)[:,None]
+
+    alphabet_len = len(background)
+    # add a pseudocount before logging for numerical stability, and re-normalize
+    ppm_ps = (ppm + pseudocount)/(1 + pseudocount*alphabet_len)
+    # note that the ic formula below is not quite computing the per-position KL divergence: sum_{b}(p*logp - p*logq)
+    # instead it is computing sum_{b}(p*logp - q*logq) but they turn out to be the same if q is the uniform distribution
+    # (valeh: Im not sure why it was done this way but Im not changing it for now, only throw if q is not uniform)
+    uniform = np.ones(len(background)) / len(background)
+    if not np.allclose(background, uniform):
+        warnings.warn("Background distribution is not uniform, IC calculation might be incorrect")
+    ic = np.sum(np.log2(ppm_ps)*ppm - (np.log2(background)*background)[None,:], axis=1)
+    return ic
+
+# from https://github.com/kundajelab/tfmodisco/blob/master/modisco/visualization/viz_sequence.py
+def ic_scale(pwm):
+    # renormalize just in case
+    pwm = pwm/np.sum(pwm, axis=-1, keepdims=True)
+    per_position_ic = compute_per_position_ic(ppm=pwm, background=[.25]*4, pseudocount=0.001)
+    return pwm*(per_position_ic[:,None])
+
+def convolve(to_scan, longer_seq):
+    # Convolve to_scan matrix against longer_seq matrix
+    vals = []
+    for i in range(len(longer_seq) - len(to_scan) + 1):
+        vals.append(np.sum(to_scan*longer_seq[i:i+len(to_scan)]))
+    return vals
 
 def compute_shift_ATAC(ref_plus_pwms, ref_minus_pwms, plus_pwm, minus_pwm):
     plus_shifts = set()
@@ -218,12 +180,27 @@ def compute_shift_DNASE(ref_plus_pwms, ref_minus_pwms, plus_pwm, minus_pwm):
 
     return plus_shift, minus_shift 
 
-
-def compute_shift(input_bam_file, input_fragment_file, input_tagalign_file, num_samples, genome_fasta_path, data_type, ref_motifs_file):
+def compute_shift(
+    input_bam_file: Optional[str],
+    input_fragment_file: Optional[str],
+    input_tagalign_file: Optional[str],
+    num_samples,
+    genome_fasta_path: str,
+    data_type: str,
+    ref_motifs_file: str,
+    logger,
+):
     # only one of the 3 inputs should be non None
-    assert (input_bam_file is None) + (input_fragment_file is None) + (input_tagalign_file is None) == 2, "Only one input file!"
+    assert (input_bam_file is None) + (input_fragment_file is None) + (input_tagalign_file is None) == 2, "Only one input file must be specified."
 
-    sampled_plus_reads, sampled_minus_reads = sample_reads(input_bam_file, input_fragment_file, input_tagalign_file, num_samples, genome_fasta_path)
+    sampled_plus_reads, sampled_minus_reads = sample_reads(
+        input_bam_file,
+        input_fragment_file,
+        input_tagalign_file,
+        num_samples,
+        genome_fasta_path,
+        logger
+    )
 
     plus_pwm, minus_pwm = get_pwms(sampled_plus_reads, sampled_minus_reads, genome_fasta_path)
     ref_plus_pwms, ref_minus_pwms = get_ref_pwms(ref_motifs_file)
@@ -234,27 +211,3 @@ def compute_shift(input_bam_file, input_fragment_file, input_tagalign_file, num_
         plus_shift, minus_shift = compute_shift_DNASE(ref_plus_pwms, ref_minus_pwms, plus_pwm, minus_pwm)
 
     return plus_shift, minus_shift
-
-
-def main():
-    args = parse_args()
-
-    if args.data_type=="ATAC":
-        ref_motifs_file = args.ATAC_ref_path
-        if ref_motifs_file is None:
-            ref_motifs_file = get_default_data_path(DefaultDataFile.atac_ref_motifs)
-    elif args.data_type=="DNASE":
-        ref_motifs_file = args.DNASE_ref_path
-        if ref_motifs_file is None:
-            ref_motifs_file = get_default_data_path(DefaultDataFile.dnase_ref_motifs) 
-    plus_shift, minus_shift = compute_shift(args.input_bam_file, 
-            args.input_fragment_file, 
-            args.input_tagalign_file,
-            args.num_samples,
-            args.genome,
-            args.data_type,
-            ref_motifs_file)
-    
-
-if __name__=="__main__":
-    main()

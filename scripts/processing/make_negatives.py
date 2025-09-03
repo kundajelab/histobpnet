@@ -215,12 +215,6 @@ def get_gc_matched_negatives(
         # for every gc value in positive how many negatives to find
         for _ in range(neg_to_pos_ratio):
             cur_gc, used_negatives = adjust_gc(chrom_mod, gc_value, negatives, used_negatives)
-            # num_candidates = len(negatives[chrom_mod][cur_gc])
-            # rand_neg_index = random.randint(0, num_candidates - 1)
-            # while rand_neg_index in used_negatives[chrom_mod][cur_gc]:
-            #     cur_gc, used_negatives = adjust_gc(chrom_mod, cur_gc, negatives, used_negatives)
-            #     num_candidates = len(negatives[chrom_mod][cur_gc])
-            #     rand_neg_index=random.randint(0,num_candidates-1)
             num_candidates = len(negatives[chrom_mod][cur_gc])
             used_negatives_set = set(used_negatives[chrom_mod][cur_gc]) # set for faster lookup
             unused_negatives = [i for i in range(num_candidates) if i not in used_negatives_set]
@@ -404,9 +398,6 @@ def main(instance_id: str):
     logger.add_to_log("All done!")
 
 if __name__ == '__main__':
-    # # TODO
-    # raise NotImplementedError("This script is not ready for execution.")
-
     # get the instance id first so we can print it fast, then continue with the rest
     instance_id = get_instance_id()
     print(f"*** Using instance_id: {instance_id}")

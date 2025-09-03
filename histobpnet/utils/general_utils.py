@@ -1,6 +1,8 @@
 import torch
 import numpy as np
 import torch.nn.functional as F
+import pyfaidx
+from .data_utils import dna_to_one_hot
 
 def to_numpy(tensor: torch.Tensor) -> np.ndarray:
     return tensor.detach().cpu().numpy()
@@ -70,6 +72,39 @@ def multinomial_nll(logits, true_counts):
 def softmax(x, temp=1):
     norm_x = x - np.mean(x,axis=1, keepdims=True)
     return np.exp(temp*norm_x)/np.sum(np.exp(temp*norm_x), axis=1, keepdims=True)
+
+def get_pwms(plus_reads, minus_reads, genome_file):
+    """
+    This function grabs 40 bp sequences around the cut sites of plus and minus reads,
+    encodes them, and computes strand‐specific sequence logos (PWMs) by averaging base
+    frequencies.
+    """
+    plus_seqs = []
+    minus_seqs = []
+    with pyfaidx.Fasta(genome_file) as g:
+        # for each read, extract a 40 bp window centered at the 5' start coordinate (which is the start coordinate
+        # for plus strand reads, and the end coordinate for minus strand reads)
+        for _, x in plus_reads.iterrows():
+            cur = str(g[x['chr']][int(x['start'])-20:int(x['start'])+20])
+            # if the read is near a chromosome edge or a non-canonical chr ( e.g. chrEBV),
+            # the slice may be shorter — those are skipped.
+            if len(cur)==40:
+                plus_seqs.append(cur)
+        for _, x in minus_reads.iterrows():
+            cur = str(g[x['chr']][int(x['end'])-20:int(x['end'])+20])
+            if len(cur)==40:
+                minus_seqs.append(cur)
+    
+    # dna_to_one_hot converts each sequence into a one‐hot encoded array: shape = (num_sequences, L, 4)
+    # where L=40 and 4 corresponds to A/C/G/T. Taking the .mean(0) collapses across all sequences, producing
+    # the average base frequency at each position → a raw PWM.
+    plus_pwm = dna_to_one_hot(plus_seqs).mean(0)
+    # this is not strictly necessary since np.sum should be 1, but it might not be I think due to floating-point drift
+    plus_pwm = plus_pwm/np.sum(plus_pwm, axis=-1, keepdims=True)
+    minus_pwm = dna_to_one_hot(minus_seqs).mean(0)
+    minus_pwm = minus_pwm/np.sum(minus_pwm, axis=-1, keepdims=True)
+
+    return plus_pwm, minus_pwm
 
 # valeh: I think these are needed to do interpretability with DeepSHAP
 class _Exp(torch.nn.Module):
