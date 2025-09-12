@@ -6,7 +6,6 @@ import warnings
 from toolbox.logger import SimpleLogger
 import polars as pl
 from typing import Optional
-from modisco.visualization import viz_sequence
 from histobpnet.utils.general_utils import get_pwms
 from .reads_to_bigwig import (
     bam_to_tagalign_stream,
@@ -131,19 +130,35 @@ def convolve(to_scan, longer_seq):
     # Convolve to_scan matrix against longer_seq matrix
     vals = []
     for i in range(len(longer_seq) - len(to_scan) + 1):
+        # does an elementwise product between the two matrices of the same shape,
+        # and then np.sum collapses all entries (across rows and columns) into a single scalar.
+        # so each entry in vals is one number: the total similarity score at that particular alignment (shift).
         vals.append(np.sum(to_scan*longer_seq[i:i+len(to_scan)]))
     return vals
 
-def compute_shift_ATAC(ref_plus_pwms, ref_minus_pwms, plus_pwm, minus_pwm):
+def compute_shift(data_type: str, ref_plus_pwms, ref_minus_pwms, plus_pwm, minus_pwm):
+    if data_type == "ATAC":
+        # 14 is the value when comparing unshifted BAM pwm
+        ref_plus_shift = 14
+        # TODO test why 5 and not 15. Also why not 4 (or 14)...
+        ref_minus_shift = 5
+        valid_shifts = [(0,0)]+ list(itertools.product([3,4,5],[-4,-5,-6]))
+    elif data_type == "DNASE":
+        ref_plus_shift = 10
+        ref_minus_shift = 10
+        valid_shifts = [(0,0), (0,1)]
+    else:
+        raise ValueError("Invalid data_type")
+
     plus_shifts = set()
     minus_shifts = set()
 
     for x in ref_plus_pwms:
-        # 14 is the value when comparing unshifted BAM pwm
-        shift = 14 - np.argmax(convolve(ic_scale(ref_plus_pwms[x]), ic_scale(plus_pwm)))
+        # np.argmax finds the shift at which the similarity score is highest
+        shift = ref_plus_shift - np.argmax(convolve(ic_scale(ref_plus_pwms[x]), ic_scale(plus_pwm)))
         plus_shifts.add(shift)
     for x in ref_minus_pwms:
-        shift = 5 - np.argmax(convolve(ic_scale(ref_minus_pwms[x]), ic_scale(minus_pwm)))
+        shift = ref_minus_shift - np.argmax(convolve(ic_scale(ref_minus_pwms[x]), ic_scale(minus_pwm)))
         minus_shifts.add(shift)
 
     if len(plus_shifts) != 1 or len(minus_shifts) != 1:
@@ -152,33 +167,10 @@ def compute_shift_ATAC(ref_plus_pwms, ref_minus_pwms, plus_pwm, minus_pwm):
     plus_shift = list(plus_shifts)[0]
     minus_shift = list(minus_shifts)[0]
 
-    if (plus_shift,minus_shift) not in [(0,0)]+ list(itertools.product([3,4,5],[-4,-5,-6])):
+    if (plus_shift,minus_shift) not in valid_shifts:
         raise ValueError("Input shift is non-standard ({:+}/{:+}). Please post an Issue.".format(plus_shift, minus_shift))
 
     return plus_shift, minus_shift
-
-def compute_shift_DNASE(ref_plus_pwms, ref_minus_pwms, plus_pwm, minus_pwm):
-    plus_shifts = set()
-    minus_shifts = set()
-
-    for x in ref_plus_pwms:
-        # 10 is the value when comparing unshifted BAM pwm
-        shift = 10 - np.argmax(convolve(ic_scale(ref_plus_pwms[x]), ic_scale(plus_pwm)))
-        plus_shifts.add(shift)
-    for x in ref_minus_pwms:
-        shift = 10 - np.argmax(convolve(ic_scale(ref_minus_pwms[x]), ic_scale(minus_pwm)))
-        minus_shifts.add(shift)
-
-    if len(plus_shifts) != 1 or len(minus_shifts) != 1:
-        raise ValueError("Input file shifts inconsistent. Please post an Issue")
-
-    plus_shift = list(plus_shifts)[0]
-    minus_shift = list(minus_shifts)[0]
-
-    if (plus_shift,minus_shift) not in [(0,0), (0,1)]:
-        raise ValueError("Input shift is non-standard ({:+}/{:+}). Please post an Issue.".format(plus_shift, minus_shift))
-
-    return plus_shift, minus_shift 
 
 def compute_shift(
     input_bam_file: Optional[str],
@@ -205,9 +197,6 @@ def compute_shift(
     plus_pwm, minus_pwm = get_pwms(sampled_plus_reads, sampled_minus_reads, genome_fasta_path)
     ref_plus_pwms, ref_minus_pwms = get_ref_pwms(ref_motifs_file)
 
-    if data_type=="ATAC":
-        plus_shift, minus_shift = compute_shift_ATAC(ref_plus_pwms, ref_minus_pwms, plus_pwm, minus_pwm)
-    elif data_type=="DNASE":
-        plus_shift, minus_shift = compute_shift_DNASE(ref_plus_pwms, ref_minus_pwms, plus_pwm, minus_pwm)
+    plus_shift, minus_shift = compute_shift(data_type, ref_plus_pwms, ref_minus_pwms, plus_pwm, minus_pwm)
 
     return plus_shift, minus_shift
