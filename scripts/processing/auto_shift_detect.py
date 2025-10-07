@@ -6,8 +6,8 @@ import warnings
 from toolbox.logger import SimpleLogger
 import polars as pl
 from typing import Optional
-from histobpnet.utils.general_utils import get_pwms
-from .reads_to_bigwig import (
+from histobpnet.utils.general_utils import (
+    get_pwms,
     bam_to_tagalign_stream,
     fragment_to_tagalign_stream,
     tagalign_stream,
@@ -44,6 +44,11 @@ def sample_reads(
         rows,
         schema=["chr", "start", "end", "x1", "x2", "strand"]
     )
+
+    # save reads to disk for posterity
+    p = "/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/reads_to_bigwig/debug_sampled_reads.bed"
+    logger.add_to_log(f"Sampled {len(reads)} reads, saving to {p}...")
+    reads.write_csv(p, separator="\t", include_header=True)
 
     # strand-specific subsets
     plus_reads = reads.filter(pl.col("strand") == "+").select(["chr", "start", "end"])

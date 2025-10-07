@@ -9,18 +9,29 @@ from toolbox.logger import SimpleLogger
 import json
 import subprocess
 import tempfile
-from .auto_shift_detect import compute_shift
+from auto_shift_detect import compute_shift
 from histobpnet.data import get_data_path, DataFile
+from histobpnet.utils.general_utils import (
+    bam_to_tagalign_stream,
+    fragment_to_tagalign_stream,
+    tagalign_stream,
+    stream_filtered_tagaligns,
+)
 
 # adapted from https://github.com/kundajelab/chrombpnet/blob/master/chrombpnet/helpers/preprocessing/reads_to_bigwig.py
 
 # Example usage:
-# TODO
+# python reads_to_bigwig.py \
+# --output_prefix /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/reads_to_bigwig \
+# --genome /large_storage/goodarzilab/valehvpa/refs/hg38/GRCh38_no_alt_analysis_set_GCA_000001405.15.fasta \
+# --ibam /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/merged.bam \
+# --chrom_sizes /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/hg38.chrom.subset.sizes \
+# -d ATAC
 
 def get_parsers():
     parser = argparse.ArgumentParser(description= "Convert input BAM/fragment/tagAlign file to appropriately shifted unstranded Bigwig")
 
-    parser.add_argument('--output_dir', type=str, required=True,
+    parser.add_argument('--output_prefix', type=str, required=True,
                         help="Output directory to store the results. Will create a subdirectory with instance_id.")
     parser.add_argument('--genome', type=str, required=True,
                         help="Reference genome fasta file to use")
@@ -31,7 +42,7 @@ def get_parsers():
                        help="Input fragment file")
     group.add_argument('-itag', '--input-tagalign-file', type=str,
                        help="Input tagAlign file")
-    parser.add_argument('-c', '--chrom-sizes', type=str, required=True,
+    parser.add_argument('-c', '--chrom_sizes', type=str, required=True,
                         help="Chrom sizes file")
     parser.add_argument('-d', '--data-type', required=True, type=str, choices=['ATAC', 'DNASE', 'HistChIP'],
                         help="assay type")
@@ -53,7 +64,7 @@ def get_parsers():
     return parser
 
 def validate_args(args_d):
-    assert (args_d["ibam"] is None) + (args_d["ifrag"] is None) + (args_d["itag"] is None) == 2, "Only one input file must be specified."
+    assert (args_d["input_bam_file"] is None) + (args_d["input_fragment_file"] is None) + (args_d["input_tagalign_file"] is None) == 2, "Only one input file must be specified."
 
 def setup(instance_id: str, skip_validate: bool = False):
     parser = get_parsers()
@@ -78,76 +89,6 @@ def setup(instance_id: str, skip_validate: bool = False):
         json.dump(args_d, f, indent=4)
 
     return args_d, output_dir, logger
-
-def is_gz_file(filepath):
-    # https://stackoverflow.com/questions/3703276/how-to-tell-if-a-file-is-gzip-compressed
-    with open(filepath, 'rb') as test_f:
-        return test_f.read(2) == b'\x1f\x8b'
-    
-def bam_to_tagalign_stream(bam_path):
-    """
-    Input: BAM file (binary alignments).
-    Command: bedtools bamtobed -i <bam>
-    Output: BED6 format (chrom, start, end, name, score, strand) — one record per aligned read.
-    Use case: First step when you only have BAM alignments and want BED intervals.
-    """
-    p = subprocess.Popen(["bedtools", "bamtobed", "-i", bam_path], stdout=subprocess.PIPE)
-    return p
-
-def fragment_to_tagalign_stream(fragment_file_path):
-    """
-    Input: Fragment file (BED-like: chrom, start, end, …).
-    Command: cat/zcat <fragments> | awk …
-    Logic: For each fragment, prints two lines: one with + strand and one with – strand.
-    Example input (fragment):
-    chr1   100   200
-    Output (tagAlign pseudo-reads):
-    chr1   100   200   1000   0   +
-    chr1   100   200   1000   0   -
-    Use case: Converts paired-end fragment representation into tagAlign (BED6 with dummy score/MAPQ),
-    for pipelines that expect tagAlign rather than fragment files.
-    """
-    read_method = "zcat " if is_gz_file(fragment_file_path) else "cat "
-    cmd = read_method + fragment_file_path + """ | awk -v OFS="\\t" '{print $1,$2,$3,1000,0,"+"; print $1,$2,$3,1000,0,"-"}'"""
-    p = subprocess.Popen([cmd], stdout=subprocess.PIPE, shell=True)
-    return p
-
-def tagalign_stream(tagalign_file_path):
-    """
-    Input: A pre-existing tagAlign file (already in BED6 format).
-    Command: just cat/zcat <tagAlign>
-    Output: A stream of tagAlign lines (chrom, start, end, dummy, dummy, strand).
-    Use case: No transformation, just a reader.
-    """
-    read_method = "zcat " if is_gz_file(tagalign_file_path) else "cat "
-    p = subprocess.Popen([read_method, tagalign_file_path], stdout=subprocess.PIPE)
-    return p
-
-def stream_filtered_tagaligns(src_tagaligns_stream, genome_file, out_stream, do_warn: bool = True):
-    """
-    Given a tagalign subprocess stream and reference genome file, filters
-    out any reads in chromosomes not included in the reference. Reads in the
-    reference chromosomes are sent to the specified output stream.
-
-    Returns:
-        Boolean. Indicates whether any reads not in the reference fasta were 
-        detected.
-    """
-    has_unknown_chroms = False
-    with pyfaidx.Fasta(genome_file) as g:
-        for line in iter(src_tagaligns_stream.stdout.readline, b''):
-            tagalign_chrom = line.decode('utf-8').strip().split('\t')[0]
-            if tagalign_chrom in g.keys():
-                out_stream.write(line)
-            else:
-                has_unknown_chroms = True
-
-    if has_unknown_chroms and do_warn:
-        msg = "!!! WARNING: Input reads contain chromosomes not in the reference" \
-            " genome fasta provided. Please ensure you are using the correct" \
-            " reference genome. If you are confident you are using the correct reference" \
-            " genome, you can safely ignore this message."
-        warnings.warn(msg)
 
 def generate_bigwig(
     output_dir: str,
@@ -231,6 +172,7 @@ def main(instance_id: str):
             args_d["genome"],
             args_d["data_type"],
             ref_motifs_file,
+            logger,
         )
     
         # {:+} means: format the number with its sign always shown
