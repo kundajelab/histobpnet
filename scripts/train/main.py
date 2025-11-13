@@ -26,7 +26,7 @@ from histobpnet.utils.metrics import compare_with_observed
 # --bias_scaled /large_storage/goodarzilab/valehvpa/projects/scCisTrans/for_chrombpnet_tuto/bias_model/ENCSR868FGK_bias_fold_0.h5 \
 # --gpu 0 1 2 3
 
-# TODO background ??
+# TODO background -> /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/reads_to_bigwig/instance-20251010_144803/unstranded.bw, but need to compare to lei's first probably, to be sure it's not too "off"
 
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     """Add arguments shared across train, predict, and interpret commands.

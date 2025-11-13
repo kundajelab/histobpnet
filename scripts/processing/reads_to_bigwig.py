@@ -119,7 +119,7 @@ def generate_bigwig(
 
     tmp_dir = os.path.join(output_dir, "temp_sort")
     logger.add_to_log(f"Creating temporary directory at path: {tmp_dir}")
-    os.makedirs(output_dir, exist_ok=False)
+    os.makedirs(tmp_dir, exist_ok=False)
 
     sort_cmd = "bedtools sort -i stdin" if bedsort else f'LC_COLLATE="C" sort -T {tmp_dir} -k1,1 -k2,2n'
     # $6 is the strand field.
@@ -127,6 +127,14 @@ def generate_bigwig(
     # If the strand is -, it shifts the end coordinate by minus_shift_delta.
     # {0:+} and {1:+} are Python .format() placeholders; the + sign specifier makes the string have
     # +N or -N so AWK sees it as an arithmetic offset.
+    #
+    # bedtool genomecov internally:
+    # - Determines the 5′ coordinate based on strand,
+    # - Adds +1 to that coordinate’s coverage count (unstranded),
+    # - Outputs the combined counts in one unstranded BEDGraph.
+    # So for example if I have 4 -strand reads whose 5' end mapped to (chr1,250),
+    # and 10 +strand reads whose 5' ends also mapped to (chr1,250), then the bedgraph
+    # file will put a 14 for (chr1,250).
     cmd = """
         awk -v OFS="\\t" '{{if ($6=="+"){{print $1,$2{0:+},$3,$4,$5,$6}} else if ($6=="-") {{print $1,$2,$3{1:+},$4,$5,$6}}}}' |
         sort -T {3} -k1,1 |
@@ -136,7 +144,7 @@ def generate_bigwig(
 
     logger.add_to_log(f"Command to run:\n{cmd}")
 
-    logger.add_to_log("Making BedGraph (Do not filter chromosomes not in reference fasta)")
+    logger.add_to_log(f"Making BedGraph (filter chromosomes not in reference fasta? {filter_chroms})")
     tmp_bedgraph = tempfile.NamedTemporaryFile(dir=output_dir)
     with open(tmp_bedgraph.name, 'w') as f:
         p2 = subprocess.Popen([cmd], stdin=subprocess.PIPE if filter_chroms else p1.stdout, stdout=f, shell=True)
@@ -146,7 +154,7 @@ def generate_bigwig(
         p2.communicate()
 
     logger.add_to_log("Making Bigwig")
-    subprocess.run(["bedGraphToBigWig", tmp_bedgraph.name, chrom_sizes_file, os.path.join(output_dir, "unstranded.bw")])
+    subprocess.run(["/home/valehvpa/bedGraphToBigWig", tmp_bedgraph.name, chrom_sizes_file, os.path.join(output_dir, "unstranded.bw")])
     tmp_bedgraph.close()
 
     logger.add_to_log(f"Removing temporary directory at path: {tmp_dir}")
@@ -203,7 +211,6 @@ def main(instance_id: str):
     logger.add_to_log("All done!")
 
 if __name__ == '__main__':
-    # # TODO
     # raise NotImplementedError("This script is not ready for execution.")
 
     # get the instance id first so we can print it fast, then continue with the rest

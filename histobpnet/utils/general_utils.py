@@ -86,13 +86,13 @@ def get_pwms(plus_reads, minus_reads, genome_file):
     with pyfaidx.Fasta(genome_file) as g:
         # for each read, extract a 40 bp window centered at the 5' start coordinate (which is the start coordinate
         # for plus strand reads, and the end coordinate for minus strand reads)
-        for _, x in plus_reads.iterrows():
+        for x in plus_reads.iter_rows(named=True):
             cur = str(g[x['chr']][int(x['start'])-20:int(x['start'])+20])
             # if the read is near a chromosome edge or a non-canonical chr ( e.g. chrEBV),
             # the slice may be shorter — those are skipped.
             if len(cur)==40:
                 plus_seqs.append(cur)
-        for _, x in minus_reads.iterrows():
+        for x in minus_reads.iter_rows(named=True):
             cur = str(g[x['chr']][int(x['end'])-20:int(x['end'])+20])
             if len(cur)==40:
                 minus_seqs.append(cur)

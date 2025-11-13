@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 import pyBigWig
 import pyfaidx
-import deepdish
 import os
 from toolbox.logger import cprint
 
@@ -120,6 +119,166 @@ def get_cts(peaks_df, bw, width):
                                             r['start'] + r['summit'] + width//2)))
         
     return np.array(vals)
+
+# valeh: I skimmed through this
+def write_bigwig(
+    data,
+    regions,
+    chrom_sizes: list,
+    bw_out: str,
+    debug_chr: str = None,
+    use_tqdm: bool = False,
+    outstats_file: str = None
+):
+    # regions may overlap but as we go in sorted order, at a given position,
+    # we will pick the value from the interval whose summit is closest to 
+    # current position
+    chr_to_idx = {}
+    for i,x in enumerate(chrom_sizes):
+        chr_to_idx[x[0]] = i
+
+    bw = pyBigWig.open(bw_out, 'w')
+    bw.addHeader(chrom_sizes)
+    
+    # regions may not be sorted, so get their sorted order (sort by chromosome index and then by start position).
+    order_of_regs = sorted(range(len(regions)), key=lambda x:(chr_to_idx[regions[x][0]], regions[x][1]))
+
+    all_entries = []
+    cur_chr = ""
+    cur_end = 0
+
+    iterator = range(len(order_of_regs))
+    if use_tqdm:
+        from tqdm import tqdm
+        iterator = tqdm(iterator)
+
+    for itr in iterator:
+        # subset to chromosome (debugging)
+        if debug_chr and (regions[i][0] != debug_chr):
+            continue
+
+        i = order_of_regs[itr]
+        i_chr, i_start, i_end, i_mid = regions[i]
+    
+        if i_chr != cur_chr: 
+            cur_chr = i_chr
+            cur_end = 0
+    
+        # bring current end to at least start of current region
+        if cur_end < i_start:
+            cur_end = i_start
+    
+        assert(regions[i][2] >= cur_end)
+    
+        # figure out where to stop for this region, get next region
+        # which may partially overlap with this one
+        next_end = i_end
+    
+        if itr+1 != len(order_of_regs):
+            n = order_of_regs[itr+1]
+            next_chr, next_start, _, next_mid = regions[n]
+       
+            if next_chr == i_chr and next_start < i_end:
+                # if next region overlaps with this, end between their midpoints
+                next_end = (i_mid+next_mid)//2
+
+        vals = data[i][cur_end - i_start:next_end - i_start]
+        bw.addEntries(
+            [i_chr]*(next_end-cur_end), 
+            list(range(cur_end,next_end)), 
+            ends = list(range(cur_end+1, next_end+1)), 
+            values=[float(x) for x in vals]
+        )
+        all_entries.append(vals)
+
+        cur_end = next_end
+
+    bw.close()
+
+    all_entries = np.hstack(all_entries)
+    if outstats_file != None:
+        with open(outstats_file, 'w') as f:
+            f.write("Min\t{:.6f}\n".format(np.min(all_entries)))
+            f.write(".1%\t{:.6f}\n".format(np.quantile(all_entries, 0.001)))
+            f.write("1%\t{:.6f}\n".format(np.quantile(all_entries, 0.01)))
+            f.write("50%\t{:.6f}\n".format(np.quantile(all_entries, 0.5)))
+            f.write("99%\t{:.6f}\n".format(np.quantile(all_entries, 0.99)))
+            f.write("99.9%\t{:.6f}\n".format(np.quantile(all_entries, 0.999)))
+            f.write("99.95%\t{:.6f}\n".format(np.quantile(all_entries, 0.9995)))
+            f.write("99.99%\t{:.6f}\n".format(np.quantile(all_entries, 0.9999)))
+            f.write("Max\t{:.6f}\n".format(np.max(all_entries)))
+
+def get_regions(regions_file, seqlen, regions_used = None, regions_format: str = 'bed10'):
+    assert(seqlen%2 == 0)
+
+    regions = pd.read_csv(regions_file, sep='\t', header=None)
+    rr = np.array(regions.values) if regions_used is None else np.array(regions.values)[regions_used]
+
+    regions_out = []
+    for x in rr:
+        if regions_format == 'bed10':
+            assert len(x) >= 10, "Expected at least 10 columns for bed10 format"
+            chr, start, end, mid = x[0], int(x[1])+int(x[9])-seqlen//2, int(x[1])+int(x[9])+seqlen//2, int(x[1])+int(x[9])
+        elif regions_format == 'bed':
+            assert len(x) >= 3, "Expected at least 3 columns for bed format"
+            chr, start, end, mid = x[0], int(x[1]), int(x[2]), (int(x[1]) + int(x[2])) // 2
+        else:
+            raise ValueError(f"Unsupported regions_format: {regions_format}. Supported formats are 'bed10' and 'bed'.")
+        regions_out.append([chr, start, end, mid])
+
+    return regions_out
+
+def hdf5_to_bigwig(
+    hdf5: str,
+    regions_file: str,
+    chrom_sizes: dict,
+    output_prefix,
+    output_prefix_stats = None,
+    debug_chr = None,
+    tqdm: bool = False,
+    h5_read_tool: str = "deepdish",
+    hdf5_key: str = '/projected_shap/seq',
+    regions_format: str = 'bed10'
+):
+    if h5_read_tool == "deepdish":
+        import deepdish
+        d = deepdish.io.load(hdf5, hdf5_key)
+    elif h5_read_tool == "h5py":
+        import h5py
+        with h5py.File(hdf5, "r") as f:
+            d = f[hdf5_key][:]
+    else:
+        raise NotImplementedError(f"Unsupported h5_read_tool: {h5_read_tool}. Supported tools are 'deepdish' and 'h5py'.")
+    
+    # remove any singleton dimensions
+    d = d.squeeze()
+
+    # check if the shape is (N, 4, seqlen) or (N, seqlen, 4)
+    if d.shape[2] == 4 and d.shape[1] != 4:
+        print(f"Input hdf5 data shape is {d.shape}, which is (N, seqlen, 4). Transposing to (N, 4, seqlen) for processing.")
+        d = d.transpose(0, 2, 1)
+
+    SEQLEN = d.shape[2]
+    assert(SEQLEN%2 == 0)
+
+    regions = get_regions(regions_file, SEQLEN, regions_format = regions_format)
+    assert(d.shape[0] == len(regions))
+
+    chr_set = set([region[0] for region in regions])
+    chr_sizes = [(x, v) for x, v in chrom_sizes.items() if x in chr_set]
+
+    # TODO this takes forever, I need to fix this
+    d = d.sum(axis=1) if h5_read_tool == "deepdish" else np.sum(d, axis=1)
+
+    write_bigwig(
+        d,
+        regions, 
+        chr_sizes, 
+        output_prefix+".bw", 
+        outstats_file=output_prefix_stats, 
+        debug_chr=debug_chr, 
+        use_tqdm=tqdm
+    )
 
 # valeh: REVIEWED ^^^^^^
 
@@ -264,7 +423,7 @@ def get_coords(peaks_df, peaks_bool):
     returns a list of tuples with (chrom, summit)
     """
     vals = []
-    for i, r in peaks_df.iterrows():
+    for _, r in peaks_df.iterrows():
         vals.append([r['chr'], r['start']+r['summit'], "f", peaks_bool])
 
     return np.array(vals)
@@ -320,107 +479,6 @@ def load_data(bed_regions, nonpeak_regions, genome_fasta, cts_bw_file, inputlen,
 
     return (train_peaks_seqs, train_peaks_cts, train_peaks_coords,
             train_nonpeaks_seqs, train_nonpeaks_cts, train_nonpeaks_coords)
-
-def write_bigwig(data, regions, gs, bw_out, debug_chr=None, use_tqdm=False, outstats_file=None):
-    # regions may overlap but as we go in sorted order, at a given position,
-    # we will pick the value from the interval whose summit is closest to 
-    # current position
-    chr_to_idx = {}
-    for i,x in enumerate(gs):
-        chr_to_idx[x[0]] = i
-
-    bw = pyBigWig.open(bw_out, 'w')
-    bw.addHeader(gs)
-    
-    # regions may not be sorted, so get their sorted order
-    order_of_regs = sorted(range(len(regions)), key=lambda x:(chr_to_idx[regions[x][0]], regions[x][1]))
-
-    all_entries = []
-    cur_chr = ""
-    cur_end = 0
-
-    iterator = range(len(order_of_regs))
-    if use_tqdm:
-        from tqdm import tqdm
-        iterator = tqdm(iterator)
-
-    for itr in iterator:
-        # subset to chromosome (debugging)
-        if debug_chr and regions[i][0]!=debug_chr:
-            continue
-
-        i = order_of_regs[itr]
-        i_chr, i_start, i_end, i_mid = regions[i]
-    
-        if i_chr != cur_chr: 
-            cur_chr = i_chr
-            cur_end = 0
-    
-        # bring current end to at least start of current region
-        if cur_end < i_start:
-            cur_end = i_start
-    
-        assert(regions[i][2]>=cur_end)
-    
-        # figure out where to stop for this region, get next region
-        # which may partially overlap with this one
-        next_end = i_end
-    
-        if itr+1 != len(order_of_regs):
-            n = order_of_regs[itr+1]
-            next_chr, next_start, _, next_mid = regions[n]
-       
-            if next_chr == i_chr and next_start < i_end:
-                # if next region overlaps with this, end between their midpoints
-                next_end = (i_mid+next_mid)//2
-    
-        vals = data[i][cur_end - i_start:next_end - i_start]
-
-        bw.addEntries([i_chr]*(next_end-cur_end), 
-                       list(range(cur_end,next_end)), 
-                       ends = list(range(cur_end+1, next_end+1)), 
-                       values=[float(x) for x in vals])
-    
-        all_entries.append(vals)
-        
-        cur_end = next_end
-
-    bw.close()
-
-    all_entries = np.hstack(all_entries)
-    if outstats_file != None:
-        with open(outstats_file, 'w') as f:
-            f.write("Min\t{:.6f}\n".format(np.min(all_entries)))
-            f.write(".1%\t{:.6f}\n".format(np.quantile(all_entries, 0.001)))
-            f.write("1%\t{:.6f}\n".format(np.quantile(all_entries, 0.01)))
-            f.write("50%\t{:.6f}\n".format(np.quantile(all_entries, 0.5)))
-            f.write("99%\t{:.6f}\n".format(np.quantile(all_entries, 0.99)))
-            f.write("99.9%\t{:.6f}\n".format(np.quantile(all_entries, 0.999)))
-            f.write("99.95%\t{:.6f}\n".format(np.quantile(all_entries, 0.9995)))
-            f.write("99.99%\t{:.6f}\n".format(np.quantile(all_entries, 0.9999)))
-            f.write("Max\t{:.6f}\n".format(np.max(all_entries)))
-
-def hdf5_to_bigwig(hdf5, regions, chrom_sizes, output_prefix, output_prefix_stats=None, debug_chr=None, tqdm=False):
-    d = deepdish.io.load(hdf5, '/projected_shap/seq')
-
-    SEQLEN = d.shape[2]
-    assert(SEQLEN%2==0)
-
-    # gs = bigwig_helper.read_chrom_sizes(chrom_sizes)
-    # gs = chrom_sizes
-    regions = bigwig_helper.get_regions(regions, SEQLEN)
-    chr_list = set([region[0] for region in regions])
-    chrom_sizes = [(x, v) for x, v in chrom_sizes.items() if x in chr_list]
-    
-    assert(d.shape[0] == len(regions))
-
-    bigwig_helper.write_bigwig(d.sum(1), 
-                        regions, 
-                        chrom_sizes, 
-                        output_prefix+".bw", 
-                        outstats_file=output_prefix_stats, 
-                        debug_chr=debug_chr, 
-                        use_tqdm=tqdm)
 
 def html_to_pdf(input_html, output_pdf):
     from weasyprint import HTML, CSS

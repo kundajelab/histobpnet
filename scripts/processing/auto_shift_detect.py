@@ -3,8 +3,8 @@ import pandas as pd
 import numpy as np
 import itertools
 import warnings
-from toolbox.logger import SimpleLogger
 import polars as pl
+import os
 from typing import Optional
 from histobpnet.utils.general_utils import (
     get_pwms,
@@ -24,31 +24,36 @@ def sample_reads(
     genome_fasta_path: str,
     logger,
 ):
-    if input_bam_file is not None:
-        p1 = bam_to_tagalign_stream(input_bam_file)
-    elif input_fragment_file is not None:
-        p1 = fragment_to_tagalign_stream(input_fragment_file)
-    elif input_tagalign_file is not None:
-        p1 = tagalign_stream(input_tagalign_file)
-
-    logger.add_to_log(f"Sampling reads from input...")
-    # num_samples is per strand, so multiply by 2
-    p2 = subprocess.Popen(["shuf", "-n", str(2*num_samples)], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-    stream_filtered_tagaligns(p1, genome_fasta_path, p2.stdin)
-    output = p2.communicate()[0]
-
-    logger.add_to_log(f"Saving as strand-specific dataframes....")
-    # "if x" -> If the trailing line is empty (""), it’s dropped.
-    rows = [x.split("\t") for x in output.decode("utf-8").split("\n") if x]
-    reads = pl.DataFrame(
-        rows,
-        schema=["chr", "start", "end", "x1", "x2", "strand"]
-    )
-
-    # save reads to disk for posterity
     p = "/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/reads_to_bigwig/debug_sampled_reads.bed"
-    logger.add_to_log(f"Sampled {len(reads)} reads, saving to {p}...")
-    reads.write_csv(p, separator="\t", include_header=True)
+    if os.path.isfile(p):
+        logger.add_to_log(f"Loading previously sampled reads from {p}...")
+        reads = pl.read_csv(p, separator="\t", has_header=True)
+    else:
+        if input_bam_file is not None:
+            p1 = bam_to_tagalign_stream(input_bam_file)
+        elif input_fragment_file is not None:
+            p1 = fragment_to_tagalign_stream(input_fragment_file)
+        elif input_tagalign_file is not None:
+            p1 = tagalign_stream(input_tagalign_file)
+
+        logger.add_to_log(f"Sampling reads from input...")
+        # num_samples is per strand, so multiply by 2
+        p2 = subprocess.Popen(["shuf", "-n", str(2*num_samples)], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        stream_filtered_tagaligns(p1, genome_fasta_path, p2.stdin)
+        output = p2.communicate()[0]
+
+        logger.add_to_log(f"Saving as strand-specific dataframes....")
+        # "if x" -> If the trailing line is empty (""), it’s dropped.
+        rows = [x.split("\t") for x in output.decode("utf-8").split("\n") if x]
+        reads = pl.DataFrame(
+            rows,
+            schema=["chr", "start", "end", "x1", "x2", "strand"],
+            orient="row"
+        )
+
+        # save reads to disk for posterity
+        logger.add_to_log(f"Sampled {len(reads)} reads, saving to {p}...")
+        reads.write_csv(p, separator="\t", include_header=True)
 
     # strand-specific subsets
     plus_reads = reads.filter(pl.col("strand") == "+").select(["chr", "start", "end"])
@@ -141,11 +146,11 @@ def convolve(to_scan, longer_seq):
         vals.append(np.sum(to_scan*longer_seq[i:i+len(to_scan)]))
     return vals
 
-def compute_shift(data_type: str, ref_plus_pwms, ref_minus_pwms, plus_pwm, minus_pwm):
+def compute_shift_given_pwms(data_type: str, ref_plus_pwms, ref_minus_pwms, plus_pwm, minus_pwm):
     if data_type == "ATAC":
         # 14 is the value when comparing unshifted BAM pwm
         ref_plus_shift = 14
-        # TODO test why 5 and not 15. Also why not 4 (or 14)...
+        # valeh: FWIW I dont understand why this is 5 and not 6
         ref_minus_shift = 5
         valid_shifts = [(0,0)]+ list(itertools.product([3,4,5],[-4,-5,-6]))
     elif data_type == "DNASE":
@@ -202,6 +207,6 @@ def compute_shift(
     plus_pwm, minus_pwm = get_pwms(sampled_plus_reads, sampled_minus_reads, genome_fasta_path)
     ref_plus_pwms, ref_minus_pwms = get_ref_pwms(ref_motifs_file)
 
-    plus_shift, minus_shift = compute_shift(data_type, ref_plus_pwms, ref_minus_pwms, plus_pwm, minus_pwm)
+    plus_shift, minus_shift = compute_shift_given_pwms(data_type, ref_plus_pwms, ref_minus_pwms, plus_pwm, minus_pwm)
 
     return plus_shift, minus_shift

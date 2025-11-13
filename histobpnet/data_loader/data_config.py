@@ -95,7 +95,7 @@ class DataConfig:
         self._validate_windows()
         self._validate_chromosomes()
         self._validate_data_type()
-    
+
     def _validate_paths(self):
         """Validate that all required files exist."""
         required_files = {
