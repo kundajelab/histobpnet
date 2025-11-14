@@ -315,17 +315,17 @@ class BPNetWrapper(ModelWrapper):
     def __init__(self, args):
         super().__init__(args)
         self.model = BPNet(
-                out_dim=args.out_dim,
-                n_filters=args.n_filters, 
-                n_layers=args.n_layers, 
-                conv1_kernel_size=args.conv1_kernel_size,
-                profile_kernel_size=args.profile_kernel_size,
-                n_outputs=args.n_outputs, 
-                n_control_tracks=args.n_control_tracks, 
-                profile_output_bias=args.profile_output_bias, 
-                count_output_bias=args.count_output_bias, 
-            )
-        
+            out_dim=args.out_dim,
+            n_filters=args.n_filters, 
+            n_layers=args.n_layers, 
+            conv1_kernel_size=args.conv1_kernel_size,
+            profile_kernel_size=args.profile_kernel_size,
+            n_outputs=args.n_outputs, 
+            n_control_tracks=args.n_control_tracks, 
+            profile_output_bias=args.profile_output_bias, 
+            count_output_bias=args.count_output_bias, 
+        )
+
     # TODO walk through this
     def _step(self, batch, batch_idx, mode: str = 'train'):
         assert mode in ['train', 'val', 'test', 'predict'], "Invalid mode. Must be one of ['train', 'val', 'test', 'predict']"

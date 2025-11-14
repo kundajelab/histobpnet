@@ -1,8 +1,8 @@
 import os
 import argparse
+from lightning.pytorch.strategies import DDPStrategy
 import lightning as L
 import torch
-from lightning.pytorch.strategies import DDPStrategy  
 import json
 from toolbox.utils import get_instance_id, set_random_seed
 from toolbox.logger import SimpleLogger
@@ -12,22 +12,17 @@ from histobpnet.model.model_config import ChromBPNetConfig
 # TODO do we need to set random seed before these imports?
 from histobpnet.model.model_wrappers import create_model_wrapper, load_pretrained_model, adjust_bias_model_logcounts
 from histobpnet.data_loader.dataset import DataModule
-from histobpnet.data_loader.genome import hg38_datasets, mm10_datasets
-from histobpnet.eval.metrics import compare_with_observed, save_predictions, load_output_to_regions, compare_predictions
+from histobpnet.eval.metrics import compare_with_observed, save_predictions, load_output_to_regions
 
 # Example usage:
 # python main.py train \
 # --output_dir /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/training \
-# --fasta /large_storage/goodarzilab/valehvpa/refs/hg38/GRCh38_no_alt_analysis_set_GCA_000001405.15.fasta \
-# --chrom_sizes /large_storage/goodarzilab/valehvpa/refs/hg38/hg38.chrom.sizes \
 # --peaks /large_storage/goodarzilab/valehvpa/projects/scCisTrans/for_chrombpnet_tuto/peaks_no_blacklist.bed \
 # --negatives /large_storage/goodarzilab/valehvpa/projects/scCisTrans/for_chrombpnet_tuto/negatives/lei_negatives.bed \
 # --fold_path /large_storage/goodarzilab/valehvpa/projects/scCisTrans/for_chrombpnet_tuto/splits/instance-20250727_104312/fold_0.json \
 # --max_epochs 2 \
 # --bias_scaled /large_storage/goodarzilab/valehvpa/projects/scCisTrans/for_chrombpnet_tuto/bias_model/ENCSR868FGK_bias_fold_0.h5 \
 # --gpu 0 1 2 3
-
-# TODO background -> /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/reads_to_bigwig/instance-20251010_144803/unstranded.bw, but need to compare to lei's first probably, to be sure it's not too "off"
 
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     """Add arguments shared across train, predict, and interpret commands.
@@ -49,7 +44,7 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
                        help='Chromosome type to analyze (e.g., train, val, test, all)')
     parser.add_argument('--model_type', type=str, default='chrombpnet',
                        help='Type of model to use')
-    # TODO what s bias_scaled as opposed to regular bias model?
+    # what s bias_scaled as opposed to regular bias model? -> see https://github.com/kundajelab/chrombpnet/wiki/Output-format
     parser.add_argument('--bias_scaled', type=str, required=True,
                        help='Path to bias scaled model')
     parser.add_argument('--chrombpnet_wo_bias', type=str, default=None,
@@ -65,10 +60,7 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
 
 def get_parsers():
     parser = argparse.ArgumentParser()
-    parser.set_defaults(command='pipeline')
-    add_common_args(parser)
-
-    subparsers = parser.add_subparsers(dest='command')
+    subparsers = parser.add_subparsers(dest='command', required=True)
 
     # train sub-command
     train_parser = subparsers.add_parser('train', help='Train the histobpnet model.')
@@ -108,10 +100,6 @@ def get_parsers():
     finetune_parser = subparsers.add_parser('finetune', help='Finetune the ChromBPNet model.')
     add_common_args(finetune_parser)
 
-    # reproduce sub-command
-    reproduce_parser = subparsers.add_parser('reproduce', help='Reproduce the ChromBPNet model.')
-    add_common_args(reproduce_parser)
-
     return parser
 
 def validate_args(args_d: dict):
@@ -121,7 +109,7 @@ def setup(instance_id: str):
     parser = get_parsers()
     args = parser.parse_args() 
 
-    validate_args(args)
+    validate_args(vars(args))
 
     # set up instance_id and output directory
     output_dir = os.path.join(args.output_dir, instance_id)
@@ -140,20 +128,22 @@ def setup(instance_id: str):
     return args, output_dir, logger
 
 def train(args, output_dir: str, logger):
-    data_config = DataConfig.from_argparse_args(args)
     logger.add_to_log(f"Training with model type: {args.model_type}")
     logger.add_to_log(f'bias: {args.bias_scaled}')
     logger.add_to_log(f'adjust_bias: {args.adjust_bias}')
+    logger.add_to_log(f'precision: {args.precision}')
+    logger.add_to_log(f'alpha: {args.alpha}')
+    logger.add_to_log(f'n_filters: {args.n_filters}')
+
+    data_config = DataConfig.from_argparse_args(args)
     logger.add_to_log(f'data_type: {data_config.data_type}')
     logger.add_to_log(f'in_window: {data_config.in_window}') 
     logger.add_to_log(f'data_dir: {data_config.data_dir}')
     logger.add_to_log(f'negative_sampling_ratio: {data_config.negative_sampling_ratio}')
     logger.add_to_log(f'fold: {data_config.fold}')
-    logger.add_to_log(f'n_filters: {args.n_filters}')
     logger.add_to_log(f'batch_size: {data_config.batch_size}')
-    logger.add_to_log(f'precision: {args.precision}')
-    logger.add_to_log(f'alpha: {args.alpha}')
 
+    # STOPPED HERE
     datamodule = DataModule(data_config, args)
     # what is this for? -> loss weighting, see model_wrappers.py
     args.alpha = datamodule.median_count / 10
@@ -171,7 +161,7 @@ def train(args, output_dir: str, logger):
         accelerator='gpu',
         devices=args.gpu,
         val_check_interval=None,
-        # strategy=DDPStrategy(find_unused_parameters=True),
+        strategy=DDPStrategy(find_unused_parameters=True),
         # So if early stopping kicks in after (say) epoch 17, then:
         # best_model.ckpt will be from the epoch with lowest val_loss up to epoch 17
         # last.ckpt will be the model as it was at epoch 17, the early-stopped point
@@ -305,7 +295,7 @@ def finetune(args, logger):
         accelerator='gpu',
         devices=args.gpu,
         val_check_interval=None,
-        # strategy=DDPStrategy(find_unused_parameters=True),
+        strategy=DDPStrategy(find_unused_parameters=True),
         callbacks=[
             L.pytorch.callbacks.EarlyStopping(monitor='val_loss', patience=5),
             L.pytorch.callbacks.ModelCheckpoint(monitor='val_loss', save_top_k=1, mode='min', filename='best_model', save_last=True),
@@ -319,42 +309,6 @@ def finetune(args, logger):
     trainer.fit(model, datamodule)
     if args.model_type == 'chrombpnet' and not args.fast_dev_run:
         torch.save(model.model.model.state_dict(), os.path.join(out_dir, 'checkpoints/chrombpnet_wo_bias.pt'))
-
-# TODO review
-def reproduce(args, logger):
-    out_dir = os.path.join(args.out_dir, args.name, f'fold_{args.fold}', 'reproduce')
-    os.makedirs(out_dir, exist_ok=True)
-    logger.add_to_log(f'out_dir: {out_dir}')
-    logger.add_to_log(f'model_type: {args.model_type}')
-    logger.add_to_log(f'chrom: {args.chrom}')
-
-    if os.path.exists(os.path.join(args.out_dir, args.name, f'fold_{args.fold}', 'checkpoints/chrombpnet_wo_bias.pt')):
-        logger.add_to_log(f'Model already trained, loading from {args.out_dir}/checkpoints/chrombpnet_wo_bias.pt')
-        args.chrombpnet_wo_bias = os.path.join(args.out_dir, args.name, f'fold_{args.fold}', 'checkpoints/chrombpnet_wo_bias.pt')
-    else:
-        train(args)
-
-    predict_path = os.path.join(args.out_dir, args.name, f'fold_{args.fold}', 'predict', args.chrom, 'regions.csv')
-    if not os.path.exists(predict_path):
-        logger.add_to_log(f'Predicting with pytorch model')
-        model_wrapper = load_model(args)
-        predict(args, model_wrapper)
-    else:
-        logger.add_to_log(f'{predict_path} already exists')
-
-    if os.path.exists(os.path.join(args.data_dir, f'models/fold_{args.fold}/chrombpnet_wo_bias.h5')):
-        logger.add_to_log(f'Predicting with chrombpnet model: {args.chrombpnet_wo_bias}')
-        args.checkpoint = os.path.join(args.data_dir, f'models/fold_{args.fold}/chrombpnet_wo_bias.h5')
-        reproduce_path = os.path.join(args.out_dir, args.name, f'fold_{args.fold}', 'reproduce', args.chrom, 'regions.csv')
-        if not os.path.exists(reproduce_path):
-            model_wrapper = load_model(args)
-            predict(args, model_wrapper, mode='reproduce')
-        else:
-            logger.add_to_log(f'{reproduce_path} already exists')
-
-        compare_predictions(os.path.join(args.out_dir, args.name, f'fold_{args.fold}'), args.chrom)
-    else:
-        logger.add_to_log(f'ChromBPNet model not found in {args.data_dir}/models/fold_{args.fold}/chrombpnet_wo_bias.h5')
 
 def main(instance_id: str):
     args, output_dir, logger = setup(instance_id)
@@ -377,20 +331,6 @@ def main(instance_id: str):
         finetune(args)
         model = load_model(args)
         predict(args, model)
-    elif args.command == 'pipeline':
-        train(args)
-        model = load_model(args)
-        predict(args, model)
-        interpret(args, model)
-    elif args.command == 'reproduce':
-        reproduce(args)
-    elif args.command == 'predict_bias':
-        from histobpnet.model.model_wrappers import BPNetWrapper
-        bpnet_bias_wrapper = BPNetWrapper(args)
-        bpnet_bias_wrapper.model = bpnet_bias_wrapper.init_bias(args.bias_scaled)
-        print('bias_scaled', args.bias_scaled)
-        print('bpnet_bias_wrapper', bpnet_bias_wrapper.model)
-        predict(args, bpnet_bias_wrapper, mode='predict_bias')
     else:
         raise ValueError(f"Unknown command: {args.command}")
 

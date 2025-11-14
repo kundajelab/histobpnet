@@ -37,9 +37,15 @@ class DataConfig:
         num_workers: int = 32,
         debug: bool = False,
     ):
-        _genome = hg38 if genome == 'hg38' else mm10 if genome == 'mm10' else None
-        _datasets = hg38_datasets() if genome == 'hg38' else mm10_datasets() if genome == 'mm10' else None
-
+        if genome == 'hg38':
+            _genome = hg38
+            _datasets = hg38_datasets()
+        elif genome == 'mm10':
+            _genome = mm10
+            _datasets = mm10_datasets()
+        else:
+            raise ValueError(f"Unsupported genome: {genome}")
+        
         self.data_dir = data_dir
         self.peaks = peaks if peaks is not None else f'{data_dir}/peaks.bed'
         self.negatives = negatives if negatives is not None else f'{data_dir}/negatives.bed'
@@ -90,8 +96,7 @@ class DataConfig:
         """Validate that all required files exist."""
         required_files = {
             'FASTA': self.fasta,
-            # TODO What is this for? I dont know where to find it...
-            # 'BigWig': self.bigwig,
+            'BigWig': self.bigwig,
             'Peaks': self.peaks
         }
         

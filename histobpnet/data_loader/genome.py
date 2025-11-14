@@ -2,6 +2,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from pathlib import Path
+import pooch
 from pooch import Decompress
 import logging
 
@@ -119,9 +120,8 @@ def safe_fetch(dataset_func, filename, processor=None, progressbar=True):
 def motifs_datasets():
     """Get enhanced motifs dataset."""
     def _create_dataset():
-        import pooch
         return pooch.create(
-            path=pooch.os_cache("genome/motifs"),
+            path=pooch.os_cache("histobpnet/genome/motifs"),
             base_url="https://zenodo.org/records/7445373/files/",
             env="GENOME_DATA_DIR",
             registry={
@@ -136,9 +136,9 @@ def motifs_datasets():
 def hg38_datasets():
     """Get enhanced hg38 dataset."""
     def _create_dataset():
-        import pooch
         return pooch.create(
-            path=pooch.os_cache("genome/hg38"),
+            path=pooch.os_cache("histobpnet/genome/hg38"),
+            # https://zenodo.org/records/12193595
             base_url="https://zenodo.org/records/12193595/files/",
             env="GENOME_DATA_DIR",  # The user can overwrite the storage path by setting this environment variable.
             # The registry specifies the files that can be fetched
@@ -168,9 +168,8 @@ def hg38_datasets():
 def mm10_datasets():
     """Get enhanced mm10 dataset."""
     def _create_dataset():
-        import pooch
         return pooch.create(
-            path=pooch.os_cache("genome/mm10"),
+            path=pooch.os_cache("histobpnet/genome/mm10"),
             base_url="https://zenodo.org/records/12193429/files/",
             env="GENOME_DATA_DIR",
             registry={
@@ -199,9 +198,8 @@ def mm10_datasets():
 def hg19_datasets():
     """Get enhanced hg19 dataset."""
     def _create_dataset():
-        import pooch
         return pooch.create(
-            path=pooch.os_cache("genome/hg19"),
+            path=pooch.os_cache("histobpnet/genome/hg19"),
             base_url="https://hgdownload.soe.ucsc.edu/goldenPath/hg19/bigZips/",
             env="GENOME_DATA_DIR",
             registry={
@@ -317,51 +315,56 @@ class Genome:
             self._annotation = Path(self._fetch_annotation())
         return str(self._annotation)
 
+# hg38
+hg38_d = hg38_datasets()
 GRCh38 = Genome(
-    fasta=lambda : hg38_datasets().fetch(
+    fasta=lambda : hg38_d.fetch(
         "hg38.fa", 
         progressbar=True
     ),
-    annotation=lambda : hg38_datasets().fetch(
+    annotation=lambda : hg38_d.fetch(
         "hg38.gtf.gz", 
         progressbar=True
     ),
-    chrom_sizes= hg38_datasets().fetch(
+    chrom_sizes= hg38_d.fetch(
         "hg38.chrom.sizes", 
         progressbar=True
     ),
-    )
+)
 hg38 = GRCh38
 
+# hg19
+hg19_d = hg19_datasets()
 GRCh37 = Genome(
-    fasta=lambda : hg19_datasets().fetch(
+    fasta=lambda : hg19_d.fetch(
         "hg19.fa", 
         progressbar=True, processor=Decompress(method="gzip", name="hg19.fa")
     ),
-    annotation=lambda : hg19_datasets().fetch(
+    annotation=lambda : hg19_d.fetch(
         "hg19.gtf.gz", 
         progressbar=True
     ),
-    chrom_sizes= hg19_datasets().fetch(
+    chrom_sizes= hg19_d.fetch(
         "hg19.chrom.sizes", 
         progressbar=True
     ),
 )
 hg19 = GRCh37
 
+# mm10
+mm10_d = mm10_datasets()
 GRCm38 = Genome(
-    fasta=lambda : mm10_datasets().fetch(
+    fasta=lambda : mm10_d.fetch(
         "mm10.fa", 
         progressbar=True
     ),
-    annotation=lambda : mm10_datasets().fetch(
+    annotation=lambda : mm10_d.fetch(
         "mm10.gtf.gz", 
         progressbar=True
     ),
-    chrom_sizes= mm10_datasets().fetch(
+    chrom_sizes= mm10_d.fetch(
         "mm10.chrom.sizes", 
         progressbar=True
     ),
-
-    )
+)
 mm10 = GRCm38

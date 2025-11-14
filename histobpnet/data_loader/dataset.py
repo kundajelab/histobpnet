@@ -16,7 +16,6 @@ import lightning as L
 from histobpnet.utils.data_utils import (
     load_region_df,
     load_data,
-    random_crop,
     get_cts,
     split_peak_and_nonpeak,
     concat_peaks_and_subsampled_negatives,
@@ -28,9 +27,8 @@ class DataModule(L.LightningDataModule):
     """DataModule for loading and processing genomic data for training and evaluation.
     
     This module handles the loading of genomic regions, their corresponding sequences,
-    and various data augmentation techniques. It supports different data types:
+    and various data augmentation techniques. It supports the following data types:
     - Profile data: For single-region analysis
-    - Long-range data: For analyzing interactions between regions
     
     The module implements different sampling strategies for training, validation and testing:
     - Train: peaks + negative_sampling_ratio (0.1) of negatives, sampled each epoch
@@ -39,7 +37,7 @@ class DataModule(L.LightningDataModule):
     
     Attributes:
         config: Configuration object containing data loading parameters
-        dataset_class: The dataset class to use (ChromBPNetBatchGenerator or LongRangeDataset)
+        dataset_class: The dataset class to use (eg ChromBPNetDataset)
         peaks: DataFrame containing peak regions
         negatives: DataFrame containing negative regions
         data: Combined DataFrame of peaks and negatives
@@ -99,7 +97,7 @@ class DataModule(L.LightningDataModule):
             self.data = self.peaks
 
     def _setup_chromosomes(self):
-        """Setup chromosome lists for training, validation and testing."""
+        """Set up chromosome lists for training, validation and testing."""
         self.train_chroms = [i for i in self.config.training_chroms if i not in self.config.exclude_chroms]
         self.val_chroms = [i for i in self.config.validation_chroms if i not in self.config.exclude_chroms]
         self.test_chroms = [i for i in self.config.test_chroms if i not in self.config.exclude_chroms]
@@ -179,9 +177,6 @@ class DataModule(L.LightningDataModule):
         return np.median(counts_subsampled)
 
     def train_dataloader(self):
-        # TODO: consider removing this since it is already called from the ctor of train_dataset...
-        self.train_dataset.crop_revcomp_data()
-        
         return torch.utils.data.DataLoader(
             self.train_dataset, 
             batch_size=self.effective_batch_size,
