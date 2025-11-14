@@ -112,7 +112,7 @@ def is_gz_file(filepath):
     # https://stackoverflow.com/questions/3703276/how-to-tell-if-a-file-is-gzip-compressed
     with open(filepath, 'rb') as test_f:
         return test_f.read(2) == b'\x1f\x8b'
-    
+
 def bam_to_tagalign_stream(bam_path):
     """
     Input: BAM file (binary alignments).
@@ -177,6 +177,17 @@ def stream_filtered_tagaligns(src_tagaligns_stream, genome_file, out_stream, do_
             " reference genome. If you are confident you are using the correct reference" \
             " genome, you can safely ignore this message."
         warnings.warn(msg)
+
+def strand_specific_start_site(df):
+    df = df.copy()
+    if set(df["Strand"]) != set(["+", "-"]):
+        raise ValueError("Not all features are strand specific!")
+
+    pos_strand = df.query("Strand == '+'").index
+    neg_strand = df.query("Strand == '-'").index
+    df.loc[pos_strand, "End"] = df.loc[pos_strand, "Start"] + 1
+    df.loc[neg_strand, "Start"] = df.loc[neg_strand, "End"] - 1
+    return df
 
 # valeh: I think these are needed to do interpretability with DeepSHAP
 class _Exp(torch.nn.Module):

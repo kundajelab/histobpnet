@@ -232,3 +232,15 @@ def flatten_dict(d, parent_key='', sep='/'):
         else:
             items.append((new_key, v))
     return dict(items)
+
+def compare_predictions(out_dir, chrom):
+    import pandas as pd
+    df_tf = pd.read_csv(os.path.join(out_dir, 'reproduce', chrom, 'regions.csv'), sep='\t')
+    df_pt = pd.read_csv(os.path.join(out_dir, 'predict', chrom, 'regions.csv'), sep='\t')
+    df_tf_peaks = df_tf[df_tf['is_peak']==1]
+    df_pt_peaks = df_pt[df_pt['is_peak']==1]
+
+    # counts_metrics(df_tf['pred_count'], df_pt['pred_count'],outf=os.path.join(out_dir, 'reproduce', chrom, 'compare_counts.png'), title='',
+    #     fontsize=20, xlab='Log Count chrombpnet original', ylab='Log Count pytorch')
+    counts_metrics(df_tf_peaks['pred_count'], df_pt_peaks['pred_count'],outf=os.path.join(out_dir, 'reproduce', chrom, 'compare'), title='',
+        fontsize=20, xlab='Log Count chrombpnet original', ylab='Log Count pytorch')

@@ -23,7 +23,7 @@ setup(
         "enformer_pytorch",
         "tangermeme",
         "polars",
+        "pooch",
         "toolbox @ git+https://github.com/watiss/toolbox.git@main"
     ],
 )
-

@@ -4,6 +4,7 @@ from argparse import ArgumentParser, Namespace
 import os
 import json
 from histobpnet.utils.parse_utils import add_argparse_args, from_argparse_args
+from .genome import hg38, hg38_datasets, mm10, mm10_datasets
 
 @dataclass
 class DataConfig:
@@ -15,69 +16,58 @@ class DataConfig:
     
     def __init__(
         self,
-        data_dir: str = "",
-        peaks: str = '{}/peaks.bed',
-        negatives: str = '{}/negatives.bed', 
-        bigwig: str = '{}/unstranded.bw', 
-        plus: str = '{}/plus.bw',
-        minus: str = '{}/minus.bw',
-        background: str = None,
-        ctl_plus: str = None, 
-        ctl_minus: str = None, 
+        data_dir: str = None,
+        peaks: str = None,
+        negatives: str = None,
+        bigwig: str = None,
         negative_sampling_ratio: float = 0.1,
         saved_data: str = None,
-        fasta: str = "",
-        chrom_sizes: str = "",
+        fasta: str = None,
+        chrom_sizes: str = None,
         fold: int = 0,
-        fold_path: str = "",
+        genome: str = 'hg38',
         in_window: int = 2114,
         out_window: int = 1000,
         shift: int = 500,
         rc: float = 0.5,
         outlier_threshold: float = 0.999,
         data_type: str = 'profile',
-        training_chroms: List = None,
-        validation_chroms: List = None,
-        test_chroms: List = None,
         exclude_chroms: List = None,
         batch_size: int = 64,
         num_workers: int = 32,
         debug: bool = False,
     ):
+        _genome = hg38 if genome == 'hg38' else mm10 if genome == 'mm10' else None
+        _datasets = hg38_datasets() if genome == 'hg38' else mm10_datasets() if genome == 'mm10' else None
+
         self.data_dir = data_dir
-        self.peaks = peaks.format(data_dir)
-        self.negatives = negatives.format(data_dir)
-        self.bigwig = bigwig.format(data_dir)
-        self.plus = plus.format(data_dir)
-        self.minus = minus.format(data_dir)
-        self.background = background
-        self.ctl_plus = ctl_plus
-        self.ctl_minus = ctl_minus
+        self.peaks = peaks if peaks is not None else f'{data_dir}/peaks.bed'
+        self.negatives = negatives if negatives is not None else f'{data_dir}/negatives.bed'
+        self.bigwig = bigwig if bigwig is not None else f'{data_dir}/unstranded.bw'
+        
+        self.fasta = fasta if fasta is not None else _genome.fasta
+        self.chrom_sizes = chrom_sizes if chrom_sizes is not None else _genome.chrom_sizes
+
+        fold_file_path = _datasets.fetch(f'fold_{fold}.json', progressbar=False)
+        splits_dict = json.load(open(fold_file_path))
+        self.training_chroms = splits_dict['train']
+        self.validation_chroms = splits_dict['valid']
+        self.test_chroms = splits_dict['test']
+
+        self.exclude_chroms = [] if exclude_chroms is None else exclude_chroms
         self.negative_sampling_ratio = negative_sampling_ratio
         self.saved_data = saved_data
-        self.fasta = fasta
-        self.chrom_sizes = chrom_sizes
         self.in_window = in_window
         self.out_window = out_window
         self.shift = shift
         self.rc = rc
         self.outlier_threshold = outlier_threshold
         self.data_type = data_type
-        self.training_chroms = training_chroms
-        self.validation_chroms = validation_chroms
-        self.test_chroms = test_chroms
         self.exclude_chroms = exclude_chroms
         self.batch_size = batch_size    
         self.num_workers = num_workers
         self.debug = debug
         self.fold = fold
-        # this should be in validation functions but we need it here to load the chrom, so oh well
-        assert os.path.isfile(fold_path) and fold_path.endswith('.json'), f"Fold path must be a valid JSON file: {fold_path}"
-        splits_dict = json.load(open(fold_path))
-        self.training_chroms = splits_dict['train'] if training_chroms is None else training_chroms
-        self.validation_chroms = splits_dict['valid'] if validation_chroms is None else validation_chroms
-        self.test_chroms = splits_dict['test'] if test_chroms is None else test_chroms
-        self.exclude_chroms = [] if exclude_chroms is None else exclude_chroms
         
     @classmethod
     def add_argparse_args(cls, parent_parser: ArgumentParser, **kwargs: Any):

@@ -17,10 +17,11 @@ from histobpnet.utils.data_utils import (
     load_region_df,
     load_data,
     random_crop,
-    crop_revcomp_augment,
     get_cts,
     split_peak_and_nonpeak,
     concat_peaks_and_subsampled_negatives,
+    crop_revcomp_data,
+    debug_subsample,
 )
 
 class DataModule(L.LightningDataModule):
@@ -97,30 +98,6 @@ class DataModule(L.LightningDataModule):
             self.negatives = None
             self.data = self.peaks
 
-        if self.config.background is not None:
-            self.background = load_region_df(
-                self.config.background,
-                chrom_sizes=self.config.chrom_sizes,
-                in_window=self.config.in_window,
-                shift=self.config.shift,
-                is_peak=False,
-            )
-            print(self.background.head())
-
-        if self.config.debug:
-            self._debug_subsample()
-
-    def _debug_subsample(self):
-        """Subsample data for debugging purposes."""
-        # chagpt: you must pass random_state explicitly, or the result will be random every time, even
-        # if you called np.random.seed(seed) before (eg during set_random_seed)
-        self.peaks = self.peaks.sample(n=int(0.01*len(self.peaks)), random_state=42)
-        if self.negatives is not None:
-            self.negatives = self.negatives.sample(n=int(0.1*len(self.peaks)), random_state=42)
-            self.data = pd.concat([self.peaks, self.negatives], ignore_index=True)
-        else:
-            self.data = self.peaks
-
     def _setup_chromosomes(self):
         """Setup chromosome lists for training, validation and testing."""
         self.train_chroms = [i for i in self.config.training_chroms if i not in self.config.exclude_chroms]
@@ -165,7 +142,7 @@ class DataModule(L.LightningDataModule):
                 inputlen=config.in_window,                                        
                 outputlen=config.out_window,
                 max_jitter=0,
-                negative_sampling_ratio=-1 if config.data_type == 'profile' else config.negative_sampling_ratio,
+                negative_sampling_ratio=config.negative_sampling_ratio,
                 cts_bw_file=config.bigwig,
                 add_revcomp=False,
                 return_coords=False,
@@ -180,7 +157,7 @@ class DataModule(L.LightningDataModule):
                 inputlen=config.in_window,                                        
                 outputlen=config.out_window,
                 max_jitter=0,
-                negative_sampling_ratio=-1 if config.data_type == 'profile' else config.negative_sampling_ratio,
+                negative_sampling_ratio=-1,
                 cts_bw_file=config.bigwig,
                 add_revcomp=False,
                 return_coords=False,
@@ -273,9 +250,6 @@ class DataModule(L.LightningDataModule):
 
         regions = self.data[self.data.iloc[:, 0].isin(chrom)].reset_index(drop=True)
         peaks, nonpeaks = split_peak_and_nonpeak(regions)
-        if (negative_sampling_ratio > 0) and (len(nonpeaks) > (len(peaks) * negative_sampling_ratio)):
-            nonpeaks = nonpeaks.sample(n=int(negative_sampling_ratio * len(peaks)), replace=False)
-            regions = pd.concat([peaks, nonpeaks], ignore_index=True)
 
         dataset = self.dataset_class(
             peak_regions=peaks,
@@ -289,6 +263,7 @@ class DataModule(L.LightningDataModule):
             add_revcomp=False,
             return_coords=False,
             shuffle_at_epoch_start=False,
+            debug=self.config.debug,
         )
         return dataset
 
@@ -305,17 +280,15 @@ class ChromBPNetDataset(torch.utils.data.Dataset):
         peak_regions, 
         nonpeak_regions, 
         genome_fasta, 
-        # a Dataset just know how many samples, and how to get one (__getitem__),
-        # it does not handle batching or shuffling — that's the DataLoader's job.
-        # batch_size, 
-        inputlen, 
-        outputlen, 
-        max_jitter, 
-        negative_sampling_ratio, 
-        cts_bw_file, 
-        add_revcomp, 
-        return_coords, 
-        shuffle_at_epoch_start, 
+        inputlen=2114, 
+        outputlen=1000, 
+        max_jitter=0, 
+        negative_sampling_ratio=0.1, 
+        cts_bw_file=None, 
+        add_revcomp=False, 
+        return_coords=False,    
+        shuffle_at_epoch_start=False, 
+        debug=False,
         **kwargs
     ):
         """Initialize the generator.
@@ -334,6 +307,10 @@ class ChromBPNetDataset(torch.utils.data.Dataset):
             shuffle_at_epoch_start: Whether to shuffle at epoch start
             **kwargs: Additional keyword arguments
         """
+        if debug:
+            peak_regions = debug_subsample(peak_regions)
+            nonpeak_regions = debug_subsample(nonpeak_regions)
+
         # Load data
         peak_seqs, peak_cts, peak_coords, nonpeak_seqs, nonpeak_cts, nonpeak_coords = load_data(
             peak_regions, nonpeak_regions, genome_fasta, cts_bw_file, inputlen, outputlen, max_jitter
@@ -351,6 +328,14 @@ class ChromBPNetDataset(torch.utils.data.Dataset):
         self.add_revcomp = add_revcomp
         self.return_coords = return_coords
         self.shuffle_at_epoch_start = shuffle_at_epoch_start
+        self.max_jitter = max_jitter
+        self.genome_fasta = genome_fasta
+        self.cts_bw_file = cts_bw_file
+
+        if nonpeak_regions is not None:
+            self.regions = pd.concat([peak_regions, nonpeak_regions], ignore_index=True)
+        else:
+            self.regions = peak_regions
 
         # Initialize data
         self.crop_revcomp_data()
@@ -368,47 +353,14 @@ class ChromBPNetDataset(torch.utils.data.Dataset):
         3. Applies reverse complement augmentation if enabled
         4. Shuffles data if shuffle_at_epoch_start is True
         """
-        if (self.peak_seqs is not None) and (self.nonpeak_seqs is not None):
-            # Crop peak data
-            cropped_peaks, cropped_cnts, cropped_coords = random_crop(
-                self.peak_seqs, self.peak_cts, self.inputlen, self.outputlen, self.peak_coords
-            )
-            
-            # Sample negative examples
-            if self.negative_sampling_ratio > 0:
-                self.sampled_nonpeak_seqs, self.sampled_nonpeak_cts, self.sampled_nonpeak_coords = subsample_nonpeak_data(
-                    self.nonpeak_seqs, self.nonpeak_cts, self.nonpeak_coords,
-                    len(self.peak_seqs), self.negative_sampling_ratio
-                )
-                self.seqs = np.vstack([cropped_peaks, self.sampled_nonpeak_seqs])
-                self.cts = np.vstack([cropped_cnts, self.sampled_nonpeak_cts])
-                self.coords = np.vstack([cropped_coords, self.sampled_nonpeak_coords])
-            else:
-                self.seqs = np.vstack([cropped_peaks, self.nonpeak_seqs])
-                self.cts = np.vstack([cropped_cnts, self.nonpeak_cts])
-                self.coords = np.vstack([cropped_coords, self.nonpeak_coords])
-        elif self.peak_seqs is not None:
-            # Only peak data
-            cropped_peaks, cropped_cnts, cropped_coords = random_crop(
-                self.peak_seqs, self.peak_cts, self.inputlen, self.outputlen, self.peak_coords
-            )
-            self.seqs = cropped_peaks
-            self.cts = cropped_cnts
-            self.coords = cropped_coords
-        elif self.nonpeak_seqs is not None:
-            # Only non-peak data
-            self.seqs = self.nonpeak_seqs
-            self.cts = self.nonpeak_cts
-            self.coords = self.nonpeak_coords
-        else:
-            raise ValueError("Both peak and non-peak arrays are empty")
+        self.cur_seqs, self.cur_cts, self.cur_coords = crop_revcomp_data(
+            self.peak_seqs, self.peak_cts, self.peak_coords,
+            self.nonpeak_seqs, self.nonpeak_cts, self.nonpeak_coords,
+            self.inputlen, self.outputlen, self.add_revcomp, self.negative_sampling_ratio, self.shuffle_at_epoch_start)
 
-        # Apply augmentation
-        self.cur_seqs, self.cur_cts, self.cur_coords = crop_revcomp_augment(
-            self.seqs, self.cts, self.coords, self.add_revcomp, shuffle=self.shuffle_at_epoch_start,
-        )
-        self.regions = pd.DataFrame(self.cur_coords, columns=['chrom', 'start', 'forward_or_reverse', 'is_peak'])
-        # print('Regions', self.regions['is_peak'].value_counts())
+    def _get_adj(self):
+        """Get adjacency matrix for the data."""
+        pass
 
     def __getitem__(self, idx):
         """Get a sample from the dataset.

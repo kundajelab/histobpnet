@@ -89,16 +89,20 @@ def concat_peaks_and_subsampled_negatives(peaks, negatives=None, negative_sampli
         peaks, negatives = split_peak_and_nonpeak(peaks)
         # print(peaks.shape, negatives.shape)
 
-    if len(negatives) > len(peaks) * negative_sampling_ratio and negative_sampling_ratio > 0:
+    if negatives is not None and len(negatives) > len(peaks) * negative_sampling_ratio and negative_sampling_ratio > 0:
         # TODO: do we need to pass random state here?
         negatives = negatives.sample(n=int(negative_sampling_ratio * len(peaks)), replace=False)
+        data = pd.concat([peaks, negatives], ignore_index=True)
+    else:
+        data = peaks
         
-    data = pd.concat([peaks, negatives], ignore_index=True)
     return data
 
 def split_peak_and_nonpeak(data):
     data['is_peak'] = data['is_peak'].astype(int).astype(bool)
     non_peaks = data[~data['is_peak']].copy()
+    if len(non_peaks) == 0:
+        non_peaks = None
     peaks = data[data['is_peak']].copy()
     return peaks, non_peaks
 
@@ -406,6 +410,64 @@ def crop_revcomp_augment(seqs, labels, coords, add_revcomp, rc_frac=0.5, shuffle
 
     return mod_seqs, mod_labels, mod_coords
 
+def crop_revcomp_data(
+    peak_seqs, peak_cts, peak_coords, 
+    nonpeak_seqs=None, nonpeak_cts=None, nonpeak_coords=None, 
+    inputlen=2114, outputlen=1000, add_revcomp=False, negative_sampling_ratio=0.1, shuffle=False):
+    """Apply random cropping and reverse complement augmentation to the data.
+        
+        This method:
+        1. Randomly crops peak data to inputlen and outputlen
+        2. Samples negative examples according to negative_sampling_ratio
+        3. Applies reverse complement augmentation if enabled
+        4. Shuffles data if shuffle is True
+    """
+    if (peak_seqs is not None) and (nonpeak_seqs is not None):
+        # Crop peak data
+        cropped_peaks, cropped_cnts, cropped_coords = random_crop(
+            peak_seqs, peak_cts, inputlen, outputlen, peak_coords
+        )
+        
+        # Sample negative examples
+        if negative_sampling_ratio > 0:
+            sampled_nonpeak_seqs, sampled_nonpeak_cts, sampled_nonpeak_coords = subsample_nonpeak_data(
+                nonpeak_seqs, nonpeak_cts, nonpeak_coords,
+                len(peak_seqs), negative_sampling_ratio
+            )
+            seqs = np.vstack([cropped_peaks, sampled_nonpeak_seqs])
+            cts = np.vstack([cropped_cnts, sampled_nonpeak_cts])
+            coords = np.vstack([cropped_coords, sampled_nonpeak_coords])
+        else:
+            seqs = np.vstack([cropped_peaks, nonpeak_seqs])
+            cts = np.vstack([cropped_cnts, nonpeak_cts])
+            coords = np.vstack([cropped_coords, nonpeak_coords])
+
+    elif peak_seqs is not None:
+        # Only peak data
+        cropped_peaks, cropped_cnts, cropped_coords = random_crop(
+            peak_seqs, peak_cts, inputlen, outputlen, peak_coords
+        )
+        seqs = cropped_peaks
+        cts = cropped_cnts
+        coords = cropped_coords
+
+    elif nonpeak_seqs is not None:
+        # Only non-peak data
+        seqs = nonpeak_seqs
+        cts = nonpeak_cts
+        coords = nonpeak_coords
+    else:
+        raise ValueError("Both peak and non-peak arrays are empty")
+
+    # Apply augmentation
+    seqs, cts, coords = crop_revcomp_augment(
+        seqs, cts, coords, inputlen, outputlen,
+        add_revcomp, shuffle=shuffle
+    )
+    # self.regions = pd.DataFrame(self.cur_coords, columns=['chrom', 'start', 'forward_or_reverse', 'is_peak'])
+    # print('Regions', self.regions['is_peak'].value_counts())
+    return seqs, cts, coords
+
 def get_seq(peaks_df, genome, width):
     """
     Same as get_cts, but fetches sequence from a given genome.
@@ -433,6 +495,17 @@ def get_seq_cts_coords(peaks_df, genome, bw, input_width, output_width, peaks_bo
     cts = get_cts(peaks_df, bw, output_width)
     coords = get_coords(peaks_df, peaks_bool)
     return seq, cts, coords
+
+def debug_subsample(peak_regions, chrom=None):
+    if peak_regions is None:
+        return None
+
+    if chrom is None:
+        chrom = peak_regions['chr'].unique()[0]
+
+    peak_regions = peak_regions[peak_regions['chr'] == chrom]
+    # print('debugging on ', chrom, 'shape', peak_regions.shape)
+    return peak_regions.reset_index(drop=True)
 
 def load_data(bed_regions, nonpeak_regions, genome_fasta, cts_bw_file, inputlen, outputlen, max_jitter):
     """
@@ -486,6 +559,6 @@ def html_to_pdf(input_html, output_pdf):
         @page {
             size: 1800mm 1300mm;
             margin: 0in 0in 0in 0in;
-    }
+        }
     ''')
     HTML(input_html).write_pdf(output_pdf, stylesheets=[css])

@@ -5,6 +5,7 @@ import lightning as L
 from lightning import LightningModule
 from lightning.pytorch.utilities.types import STEP_OUTPUT
 import numpy as np
+from tqdm import tqdm
 
 from histobpnet.model.chrombpnet import BPNet, ChromBPNet
 from histobpnet.model.model_config import ChromBPNetConfig
@@ -22,21 +23,27 @@ def adjust_bias_model_logcounts(bias_model, dataloader, verbose=False, device=1)
     ASSUMES model_bias's last layer is a dense layer that outputs logcounts. 
     This would change if you change the model.
     """
-    print("Predicting within adjust counts")
+    print("Adjusting bias model counts")
     bias_model.eval()
     with torch.no_grad():
-        output = L.Trainer(logger=False, devices=device).predict(bias_model, dataloader)
-        parsed_output = {key: np.concatenate([batch[key] for batch in output]) for key in output[0]}
-        try:    
-            delta = parsed_output['true_count'].mean(-1) - parsed_output['pred_count'].mean(-1)
-        except:
-            import pdb; pdb.set_trace()
-            # delta = parsed_output['true_count'].mean(dim=-1) - parsed_output['pred_count'].mean(dim=-1)
-        # delta = torch.cat([predictions['delta'] for predictions in predictions], dim=0)
-        bias_model.linear.bias += torch.Tensor(delta).to(bias_model.linear.bias.device)
+        bias_model.to('cuda')
+        for batch in tqdm(dataloader):
+            batch = {k: v.to('cuda') if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+            _, pred_counts = bias_model(batch['onehot_seq'])
+            true_counts = batch['profile'].sum(dim=-1).log1p()
+            # _delta = out['true_count'].mean(-1) - out['pred_count'].mean(-1)
+            _delta = true_counts.mean(-1) - pred_counts.mean(-1)
+            delta.append(_delta)
+        delta = torch.cat(delta, dim=0).mean()
+        # bpnet_wrapper = BPNetWrapper(args)
+        # bpnet_wrapper.model = bias_model
+        # output = L.Trainer(logger=False, devices=device).predict(bpnet_wrapper, dataloader)
+        # parsed_output = {key: np.concatenate([batch[key] for batch in output]) for key in output[0]}
+        # delta = parsed_output['true_count'].mean(-1) - parsed_output['pred_count'].mean(-1)
+        # delta = torch.cat([predictions['delta'] for predictions in predictions], dim=0).mean()
 
     if verbose:
-        print('### delta', delta.mean(), flush=True)
+        print('### delta', delta, flush=True)
     return bias_model
 
 # TODO
@@ -119,6 +126,33 @@ class CountWrapper(torch.nn.Module):
     def forward(self, x, x_ctl=None, **kwargs):
         return self.model(x, x_ctl=x_ctl, **kwargs)[1]
 
+def init_bias(bias, dataloader=None, verbose=False, device=1):
+    print(f"Loading bias model from {bias}")
+    bias_model = BPNet.from_keras(bias, name='bias')
+    bias_model.eval()  # Freeze the sub-model
+    for param in bias_model.parameters():
+        param.requires_grad = False
+
+    if dataloader is not None:
+        bias_model = adjust_bias_model_logcounts(bias_model, dataloader, verbose=verbose, device=device)
+    return bias_model
+
+def init_chrombpnet_wo_bias(chrombpnet_wo_bias, freeze=True):
+    print(f"Loading chrombpnet_wo_bias model from {chrombpnet_wo_bias}")
+    if chrombpnet_wo_bias.endswith('.h5'):
+        model = BPNet.from_keras(chrombpnet_wo_bias)
+    elif chrombpnet_wo_bias.endswith('.pt'):
+        model = BPNet(n_filters=512, n_layers=8)
+        model.load_state_dict(torch.load(chrombpnet_wo_bias, map_location='cpu'))
+    elif chrombpnet_wo_bias.endswith('.ckpt'):
+        model = BPNet.load_from_checkpoint(chrombpnet_wo_bias)
+
+    if freeze:
+        for param in model.parameters():
+            param.requires_grad = False
+
+    return model
+
 class ModelWrapper(LightningModule):
     """A generic wrapper for different model architectures to be used with PyTorch Lightning.
     
@@ -145,24 +179,6 @@ class ModelWrapper(LightningModule):
         # TODO where is this set? And why isnt this just 1-alpha?
         self.beta = args.beta
         self.verbose = args.verbose
-        
-        if args.model_type == 'chrombpnet':
-            config = ChromBPNetConfig.from_argparse_args(args)
-            self.model = ChromBPNet(config)
-        elif args.model_type == 'bpnet':
-            self.model = BPNet(
-                out_dim=args.out_dim,
-                n_filters=args.n_filters, 
-                n_layers=args.n_layers, 
-                conv1_kernel_size=args.conv1_kernel_size,
-                profile_kernel_size=args.profile_kernel_size,
-                n_outputs=args.n_outputs, 
-                n_control_tracks=args.n_control_tracks, 
-                profile_output_bias=args.profile_output_bias, 
-                count_output_bias=args.count_output_bias, 
-            )
-        else:
-            raise ValueError(f"Model type {args.model_type} not supported")
         
         # Initialize metrics storage
         self.metrics = {
@@ -192,6 +208,14 @@ class ModelWrapper(LightningModule):
 
     def _step(self, batch, batch_idx, mode='train'):
         raise NotImplementedError("Subclasses must implement this method")
+
+    def init_bias(self, bias, dataloader=None, verbose=False, device=1):
+        # print(f"Loading bias model from {bias}")
+        return init_bias(bias, dataloader=dataloader, verbose=verbose, device=device)
+
+    def init_chrombpnet_wo_bias(self, chrombpnet_wo_bias, freeze=True):
+        # print(f"Initializing chrombpnet_wo_bias model from {chrombpnet_wo_bias}")
+        return init_chrombpnet_wo_bias(chrombpnet_wo_bias, freeze=freeze)
 
     def _predict_on_dataloader(self, dataloader, func, **kwargs):
         outs = []
@@ -288,6 +312,20 @@ class BPNetWrapper(ModelWrapper):
     such as profile and count predictions, and appropriate loss calculations.
     """
 
+    def __init__(self, args):
+        super().__init__(args)
+        self.model = BPNet(
+                out_dim=args.out_dim,
+                n_filters=args.n_filters, 
+                n_layers=args.n_layers, 
+                conv1_kernel_size=args.conv1_kernel_size,
+                profile_kernel_size=args.profile_kernel_size,
+                n_outputs=args.n_outputs, 
+                n_control_tracks=args.n_control_tracks, 
+                profile_output_bias=args.profile_output_bias, 
+                count_output_bias=args.count_output_bias, 
+            )
+        
     # TODO walk through this
     def _step(self, batch, batch_idx, mode: str = 'train'):
         assert mode in ['train', 'val', 'test', 'predict'], "Invalid mode. Must be one of ['train', 'val', 'test', 'predict']"
@@ -343,6 +381,19 @@ class BPNetWrapper(ModelWrapper):
         optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001, eps=1e-7)
         return optimizer
 
+    # TODO review
+    def predict(self, x, forward_only=True):
+        y_profile, y_count = self(x)
+        y_count = torch.exp(y_count)
+
+        if not forward_only:
+            y_profile_revcomp, y_count_revcomp = self(x[:, ::-1, ::-1])
+            y_count_revcomp = torch.exp(y_count_revcomp)
+            y_profile = (y_profile + y_profile_revcomp) / 2
+            y_count = (y_count + y_count_revcomp) / 2
+
+        return y_profile.cpu().numpy(), y_count.cpu().numpy()
+    
 class ChromBPNetWrapper(BPNetWrapper):
     """Wrapper for ChromBPNet model with specific configurations and loss functions.
     
@@ -356,10 +407,8 @@ class ChromBPNetWrapper(BPNetWrapper):
     ):
         super().__init__(args)
 
-        if args.bias_scaled:
-            self.init_bias(args.bias_scaled)
-        if args.chrombpnet_wo_bias is not None:
-            self.init_chrombpnet_wo_bias(args.chrombpnet_wo_bias)
+        config = ChromBPNetConfig.from_argparse_args(args)
+        self.model = ChromBPNet(config)
 
     def init_bias(self, bias, dataloader=None, verbose=False, device=1):
         print(f"Loading bias model from {bias}")
@@ -395,15 +444,24 @@ def create_model_wrapper(
     if model_type == 'bpnet':
         return BPNetWrapper(args)
     elif model_type == 'chrombpnet':
-        return ChromBPNetWrapper(args)
+        model_wrapper = ChromBPNetWrapper(args)
+        if args.bias_scaled:
+            model_wrapper.model.bias = model_wrapper.init_bias(args.bias_scaled)
+        if args.chrombpnet_wo_bias:
+            model_wrapper.model.model = model_wrapper.init_chrombpnet_wo_bias(args.chrombpnet_wo_bias, freeze=False)
+        return model_wrapper
     else:
         raise ValueError(f"Unknown model type: {model_type}") 
 
 def load_pretrained_model(args):
+    import os
+    if args.bias_scaled is None and os.path.exists(os.path.join(args.data_dir, 'bias_scaled.h5')):
+        bias_scaled = os.path.join(args.data_dir, 'bias_scaled.h5')
+    
     checkpoint = args.checkpoint
     if checkpoint is not None:
         if checkpoint.endswith('.ckpt'):
-            model_wrapper = ChromBPNetWrapper.load_from_checkpoint(checkpoint)
+            model_wrapper = ChromBPNetWrapper.load_from_checkpoint(checkpoint, map_location='cpu')
         elif checkpoint.endswith('.pt'):
             model_wrapper = ChromBPNetWrapper(args)
             # TODO why map location is cpu?
@@ -414,6 +472,13 @@ def load_pretrained_model(args):
             # TODO later I think this can only load a chrombpnet_wo_bias, not a full chrombpnet...
             print(f"Loading chrombpnet_wo_bias model from {checkpoint}")
             model_wrapper.model.model = BPNet.from_keras(checkpoint)
+        else:
+            raise ValueError("No valid checkpoint found")
+        # set bias
+        if bias_scaled:
+            model_wrapper.model.bias = model_wrapper.init_bias(bias_scaled)
+        else:
+            print(f"No bias model found")
     else:
         model_wrapper = ChromBPNetWrapper(args)
 

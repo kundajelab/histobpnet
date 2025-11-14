@@ -208,6 +208,18 @@ class BPNet(torch.nn.Module):
             pred_count = torch.cat([pred_count, torch.log1p(x_ctl)], dim=-1)
         pred_count = self.linear(pred_count)
         return pred_count
+    
+    def predict(self, x, forward_only=True):
+        y_profile, y_count = self(x)
+        y_count = torch.exp(y_count)
+
+        if not forward_only:
+            y_profile_revcomp, y_count_revcomp = self(x.flip(dims=[1, 2])) #[:, ::-1, ::-1])
+            y_count_revcomp = torch.exp(y_count_revcomp)
+            y_profile = (y_profile + y_profile_revcomp) / 2
+            y_count = (y_count + y_count_revcomp) / 2
+
+        return y_profile.cpu().numpy().squeeze(1), y_count.cpu().numpy().squeeze(-1)
 
     @classmethod
     def from_keras(cls, filename, name='chrombpnet'):
