@@ -4,19 +4,7 @@ from histobpnet.model.bpnet import BPNet
 # adapted from BPNet in bpnet-lite, credit goes to Jacob Schreiber <jmschreiber91@gmail.com>
 class ChromBPNet(nn.Module):
     """A ChromBPNet model.
-
-    ChromBPNet is an extension of BPNet to handle chromatin accessibility data,
-    in contrast to the protein binding data that BPNet handles. The distinction
-    between these data types is that an enzyme used in DNase-seq and ATAC-seq
-    experiments itself has a soft sequence preference, meaning that the
-    strength of the signal is driven by real biology but that the exact read
-    mapping locations are driven by the soft sequence bias of the enzyme.
-
-    ChromBPNet handles this by treating the data using two models: a bias
-    model that is initially trained on background (non-peak) regions where
-    the bias dominates, and an accessibility model that is subsequently trained
-    using a frozen version of the bias model. The bias model learns to remove
-    the enzyme bias so that the accessibility model can learn real motifs.
+    See https://github.com/jmschrei/bpnet-lite/tree/master?tab=readme-ov-file#chrombpnet
     """
 
     def __init__(

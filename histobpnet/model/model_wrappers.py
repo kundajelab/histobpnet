@@ -6,6 +6,7 @@ from lightning import LightningModule
 from lightning.pytorch.utilities.types import STEP_OUTPUT
 import numpy as np
 from tqdm import tqdm
+import os
 
 from histobpnet.model.chrombpnet import BPNet, ChromBPNet
 from histobpnet.model.model_config import ChromBPNetConfig
@@ -129,7 +130,8 @@ class CountWrapper(torch.nn.Module):
 def init_bias(bias, dataloader=None, verbose=False, device=1):
     print(f"Loading bias model from {bias}")
     bias_model = BPNet.from_keras(bias, name='bias')
-    bias_model.eval()  # Freeze the sub-model
+    # Freeze the sub-model
+    bias_model.eval()
     for param in bias_model.parameters():
         param.requires_grad = False
 
@@ -142,12 +144,14 @@ def init_chrombpnet_wo_bias(chrombpnet_wo_bias, freeze=True):
     if chrombpnet_wo_bias.endswith('.h5'):
         model = BPNet.from_keras(chrombpnet_wo_bias)
     elif chrombpnet_wo_bias.endswith('.pt'):
+        # TODO why n_filters 512 and why map_location cpu?
         model = BPNet(n_filters=512, n_layers=8)
         model.load_state_dict(torch.load(chrombpnet_wo_bias, map_location='cpu'))
     elif chrombpnet_wo_bias.endswith('.ckpt'):
         model = BPNet.load_from_checkpoint(chrombpnet_wo_bias)
 
     if freeze:
+        model.eval()
         for param in model.parameters():
             param.requires_grad = False
 
@@ -377,7 +381,7 @@ class BPNetWrapper(ModelWrapper):
         return loss
         
     def configure_optimizers(self):
-        # TODO config-ify lr and eps
+        # TODO_later config-ify lr and eps
         optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001, eps=1e-7)
         return optimizer
 
@@ -405,35 +409,19 @@ class ChromBPNetWrapper(BPNetWrapper):
         self,
         args,
     ):
+        """Initialize ChromBPNet wrapper.
+        
+        Args:
+            model: ChromBPNet model instance
+            alpha: Weight for count loss
+            beta: Weight for profile loss
+            bias_scaled: Path to bias model if using scaled bias
+            **kwargs: Additional arguments to be passed to the model
+        """
         super().__init__(args)
 
         config = ChromBPNetConfig.from_argparse_args(args)
         self.model = ChromBPNet(config)
-
-    def init_bias(self, bias, dataloader=None, verbose=False, device=1):
-        print(f"Loading bias model from {bias}")
-        self.model.bias = BPNet.from_keras(bias, name='bias')
-        # Freeze the bias model
-        self.model.bias.eval() 
-        for param in self.model.bias.parameters():
-            param.requires_grad = False
-
-        if dataloader is not None:
-            self.model.bias = adjust_bias_model_logcounts(self.model.bias, dataloader, verbose=verbose, device=device)
-
-    def init_chrombpnet_wo_bias(self, chrombpnet_wo_bias):
-        print(f"Loading chrombpnet_wo_bias model from {chrombpnet_wo_bias}")
-        if chrombpnet_wo_bias.endswith('.h5'):
-            self.model.conv_tower = BPNet.from_keras(chrombpnet_wo_bias)
-        else:
-            self.model.conv_tower.load_state_dict(torch.load(chrombpnet_wo_bias, map_location=self.device))
-
-        # TODO I think finetune is not defined?
-        if not self.finetune:
-            print("Freezing the model")
-            self.model.conv_tower.eval()
-            for param in self.model.conv_tower.parameters():
-                param.requires_grad = False
 
 def create_model_wrapper(
     args,
@@ -454,10 +442,10 @@ def create_model_wrapper(
         raise ValueError(f"Unknown model type: {model_type}") 
 
 def load_pretrained_model(args):
-    import os
-    if args.bias_scaled is None and os.path.exists(os.path.join(args.data_dir, 'bias_scaled.h5')):
-        bias_scaled = os.path.join(args.data_dir, 'bias_scaled.h5')
-    
+    model_type = args.model_type.lower()
+    if model_type != 'chrombpnet':
+        raise NotImplementedError("Loading pretrained models is currently only implemented for ChromBPNetWrapper")
+
     checkpoint = args.checkpoint
     if checkpoint is not None:
         if checkpoint.endswith('.ckpt'):
@@ -466,15 +454,19 @@ def load_pretrained_model(args):
             model_wrapper = ChromBPNetWrapper(args)
             # TODO why map location is cpu?
             model_wrapper.model.model.load_state_dict(torch.load(checkpoint, map_location='cpu'))
-        elif checkpoint.endswith('.h5'):  
+        elif checkpoint.endswith('.h5'):
             model_wrapper = ChromBPNetWrapper(args)
             # For Keras H5 files, load using the from_keras method
-            # TODO later I think this can only load a chrombpnet_wo_bias, not a full chrombpnet...
+            # note: this can only load a chrombpnet_wo_bias, not a full chrombpnet...
             print(f"Loading chrombpnet_wo_bias model from {checkpoint}")
             model_wrapper.model.model = BPNet.from_keras(checkpoint)
         else:
             raise ValueError("No valid checkpoint found")
+
         # set bias
+        bias_scaled = args.bias_scaled
+        if bias_scaled is None and os.path.exists(os.path.join(args.data_dir, 'bias_scaled.h5')):
+            bias_scaled = os.path.join(args.data_dir, 'bias_scaled.h5')
         if bias_scaled:
             model_wrapper.model.bias = model_wrapper.init_bias(bias_scaled)
         else:

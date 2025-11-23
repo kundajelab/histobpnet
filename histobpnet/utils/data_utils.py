@@ -4,6 +4,17 @@ import pyBigWig
 import pyfaidx
 import os
 from toolbox.logger import cprint
+from toolbox.one_hot import dna_to_one_hot
+
+def html_to_pdf(input_html, output_pdf):
+    from weasyprint import HTML, CSS
+    css = CSS(string='''
+        @page {
+            size: 1800mm 1300mm;
+            margin: 0in 0in 0in 0in;
+        }
+    ''')
+    HTML(input_html).write_pdf(output_pdf, stylesheets=[css])
 
 def read_chrom_sizes(fname):
     with open(fname) as f:
@@ -23,6 +34,13 @@ def format_region(df, width=500):
     return df
 
 def expand_3col_to_10col(df):
+    # Expands a 3-column DataFrame to a 10-column DataFrame by adding placeholder columns.
+    # Assumes the first three columns are chr, start, end.
+    # The summit is calculated as the midpoint between start and end.
+    # The additional columns are filled with '.' as placeholders.
+    # The final DataFrame has columns:
+    # ['chr', 'start', 'end', 'name', 'score', 'strand', 'signalValue', 'pValue', 'qValue', 'summit']
+    # where 'name', 'score', 'strand', 'signalValue', 'pValue', 'qValue' are placeholders.
     if df.shape[1] != 3:
         df = df.iloc[:, :3].copy()
     for i in ['name', 'score', 'strand', 'signalValue', 'pValue', 'qValue']: #range(4, 10):
@@ -123,6 +141,82 @@ def get_cts(peaks_df, bw, width):
                                             r['start'] + r['summit'] + width//2)))
         
     return np.array(vals)
+
+def get_seq(peaks_df, genome, width):
+    """
+    Same as get_cts, but fetches sequence from a given genome.
+    """
+    vals = []
+    for _, r in peaks_df.iterrows():
+        sequence = str(genome[r['chr']][(r['start']+r['summit'] - width//2):(r['start'] + r['summit'] + width//2)])
+        vals.append(sequence)
+
+    return dna_to_one_hot(vals)
+
+def get_coords(peaks_df, peaks_bool):
+    """
+    Fetch the co-ordinates of the regions in bed file
+    returns a list of tuples with (chrom, summit)
+    """
+    vals = []
+    for _, r in peaks_df.iterrows():
+        vals.append([r['chr'], r['start']+r['summit'], "f", peaks_bool])
+
+    return np.array(vals)
+
+def get_seq_cts_coords(peaks_df, genome, bw, input_width, output_width, peaks_bool):
+    seq = get_seq(peaks_df, genome, input_width)
+    cts = get_cts(peaks_df, bw, output_width)
+    coords = get_coords(peaks_df, peaks_bool)
+    return seq, cts, coords
+
+def load_data(bed_regions, nonpeak_regions, genome_fasta, cts_bw_file, inputlen, outputlen, max_jitter):
+    """
+    Load sequences and corresponding base resolution counts for training, 
+    validation regions in peaks and nonpeaks (2 x 2 x 2 = 8 matrices).
+
+    For training peaks/nonpeaks, values for inputlen + 2*max_jitter and outputlen + 2*max_jitter 
+    are returned centered at peak summit. This allows for jittering examples by randomly
+    cropping. Data of width inputlen/outputlen is returned for validation
+    data.
+    """
+    cts_bw = pyBigWig.open(cts_bw_file)
+    genome = pyfaidx.Fasta(genome_fasta)
+
+    # peaks
+    train_peaks_seqs=None
+    train_peaks_cts=None
+    train_peaks_coords=None
+    # nonpeaks
+    train_nonpeaks_seqs=None
+    train_nonpeaks_cts=None
+    train_nonpeaks_coords=None
+
+    if bed_regions is not None:
+        if not set(['chr', 'start', 'summit']).issubset(bed_regions.columns):
+            bed_regions = expand_3col_to_10col(bed_regions)
+        train_peaks_seqs, train_peaks_cts, train_peaks_coords = get_seq_cts_coords(bed_regions,
+                                                                                   genome,
+                                                                                   cts_bw,
+                                                                                   inputlen+2*max_jitter,
+                                                                                   outputlen+2*max_jitter,
+                                                                                   peaks_bool=1)
+    
+    if nonpeak_regions is not None:
+        if not set(['chr', 'start', 'summit']).issubset(nonpeak_regions.columns):
+            nonpeak_regions = expand_3col_to_10col(nonpeak_regions)
+        train_nonpeaks_seqs, train_nonpeaks_cts, train_nonpeaks_coords = get_seq_cts_coords(nonpeak_regions,
+                                                                                            genome,
+                                                                                            cts_bw,
+                                                                                            inputlen,
+                                                                                            outputlen,
+                                                                                            peaks_bool=0)
+
+    cts_bw.close()
+    genome.close()
+
+    return (train_peaks_seqs, train_peaks_cts, train_peaks_coords,
+            train_nonpeaks_seqs, train_nonpeaks_cts, train_nonpeaks_coords)
 
 # valeh: I skimmed through this
 def write_bigwig(
@@ -232,6 +326,48 @@ def get_regions(regions_file, seqlen, regions_used = None, regions_format: str =
 
     return regions_out
 
+def load_h5_and_sum(hdf5: str, key: str, chunk_n: int = 256):
+    import h5py
+    with h5py.File(hdf5, "r") as f:
+        ds = f[key]
+        shape = ds.shape
+
+        # interpret orientation
+        if shape[1] == 4:
+            # (N, 4, seqlen)
+            axis_channel = 1
+            SEQLEN = shape[2]
+        elif shape[2] == 4:
+            # (N, seqlen, 4)
+            axis_channel = 2
+            SEQLEN = shape[1]
+        else:
+            raise ValueError("No channel dimension of size 4 found. We expect either (N,4,seqlen) or (N,seqlen,4).")
+
+        N = shape[0]
+        assert(SEQLEN%2 == 0)
+
+        out = np.zeros((N, SEQLEN), dtype=ds.dtype)
+
+        # chunk over N
+        for i in range(0, N, chunk_n):
+            j = min(i + chunk_n, N)
+
+            if axis_channel == 1:
+                # data already (N,4,L)
+                # sometimes there is a trailing dim of 1 on the last axis for whatever reason
+                # squeeze that out
+                block = ds[i:j, :, :].squeeze()
+                out[i:j] = np.sum(block, axis=1)
+            else:
+                # data is (N,L,4) — sum across last axis
+                # sometimes there is a trailing dim of 1 on the last axis for whatever reason
+                # squeeze that out
+                block = ds[i:j, :, :].squeeze()
+                out[i:j] = np.sum(block, axis=2)
+
+    return out, SEQLEN
+
 def hdf5_to_bigwig(
     hdf5: str,
     regions_file: str,
@@ -242,37 +378,21 @@ def hdf5_to_bigwig(
     tqdm: bool = False,
     h5_read_tool: str = "deepdish",
     hdf5_key: str = '/projected_shap/seq',
-    regions_format: str = 'bed10'
+    regions_format: str = 'bed10',
+    chunk_n: int = 256,
 ):
     if h5_read_tool == "deepdish":
-        import deepdish
-        d = deepdish.io.load(hdf5, hdf5_key)
+        raise NotImplementedError("You should probably just switch to h5py, think about it")
     elif h5_read_tool == "h5py":
-        import h5py
-        with h5py.File(hdf5, "r") as f:
-            d = f[hdf5_key][:]
+        d, SEQLEN = load_h5_and_sum(hdf5, hdf5_key, chunk_n=chunk_n)
     else:
         raise NotImplementedError(f"Unsupported h5_read_tool: {h5_read_tool}. Supported tools are 'deepdish' and 'h5py'.")
-    
-    # remove any singleton dimensions
-    d = d.squeeze()
-
-    # check if the shape is (N, 4, seqlen) or (N, seqlen, 4)
-    if d.shape[2] == 4 and d.shape[1] != 4:
-        print(f"Input hdf5 data shape is {d.shape}, which is (N, seqlen, 4). Transposing to (N, 4, seqlen) for processing.")
-        d = d.transpose(0, 2, 1)
-
-    SEQLEN = d.shape[2]
-    assert(SEQLEN%2 == 0)
 
     regions = get_regions(regions_file, SEQLEN, regions_format = regions_format)
-    assert(d.shape[0] == len(regions))
+    assert(len(regions) == d.shape[0])
 
     chr_set = set([region[0] for region in regions])
     chr_sizes = [(x, v) for x, v in chrom_sizes.items() if x in chr_set]
-
-    # TODO this takes forever, I need to fix this
-    d = d.sum(axis=1) if h5_read_tool == "deepdish" else np.sum(d, axis=1)
 
     write_bigwig(
         d,
@@ -284,60 +404,18 @@ def hdf5_to_bigwig(
         use_tqdm=tqdm
     )
 
+def debug_subsample(peak_regions, chrom=None):
+    if peak_regions is None:
+        return None
+
+    if chrom is None:
+        chrom = peak_regions['chr'].unique()[0]
+
+    peak_regions = peak_regions[peak_regions['chr'] == chrom]
+    # print('debugging on ', chrom, 'shape', peak_regions.shape)
+    return peak_regions.reset_index(drop=True)
+
 # valeh: REVIEWED ^^^^^^
-
-def dna_to_one_hot(seqs):
-    """
-    Converts a list of DNA ("ACGT") sequences to one-hot encodings, where the
-    position of 1s is ordered alphabetically by "ACGT". `seqs` must be a list
-    of N strings, where every string is the same length L. Returns an N x L x 4
-    NumPy array of one-hot encodings, in the same order as the input sequences.
-    All bases will be converted to upper-case prior to performing the encoding.
-    Any bases that are not "ACGT" will be given an encoding of all 0s.
-    """
-    seq_len = len(seqs[0])
-    assert np.all(np.array([len(s) for s in seqs]) == seq_len)
-
-    # Join all sequences together into one long string, all uppercase
-    seq_concat = "".join(seqs).upper() + "ACGT"
-    # Add one example of each base, so np.unique doesn't miss indices later
-
-    one_hot_map = np.identity(5)[:, :-1].astype(np.int8)
-
-    # Convert string into array of ASCII character codes;
-    base_vals = np.frombuffer(bytearray(seq_concat, "utf8"), dtype=np.int8)
-
-    # Anything that's not an A, C, G, or T gets assigned a higher code
-    base_vals[~np.isin(base_vals, np.array([65, 67, 71, 84]))] = 85
-
-    # Convert the codes into indices in [0, 4], in ascending order by code
-    _, base_inds = np.unique(base_vals, return_inverse=True)
-
-    # Get the one-hot encoding for those indices, and reshape back to separate
-    return one_hot_map[base_inds[:-4]].reshape((len(seqs), seq_len, 4))
-
-def one_hot_to_dna(one_hot):
-    """
-    Converts a one-hot encoding into a list of DNA ("ACGT") sequences, where the
-    position of 1s is ordered alphabetically by "ACGT". `one_hot` must be an
-    N x L x 4 array of one-hot encodings. Returns a lits of N "ACGT" strings,
-    each of length L, in the same order as the input array. The returned
-    sequences will only consist of letters "A", "C", "G", "T", or "N" (all
-    upper-case). Any encodings that are all 0s will be translated to "N".
-    """
-    bases = np.array(["A", "C", "G", "T", "N"])
-    # Create N x L array of all 5s
-    one_hot_inds = np.tile(one_hot.shape[2], one_hot.shape[:2])
-
-    # Get indices of where the 1s are
-    batch_inds, seq_inds, base_inds = np.where(one_hot)
-
-    # In each of the locations in the N x L array, fill in the location of the 1
-    one_hot_inds[batch_inds, seq_inds] = base_inds
-
-    # Fetch the corresponding base for each position using indexing
-    seq_array = bases[one_hot_inds]
-    return ["".join(seq) for seq in seq_array]
 
 # https://stackoverflow.com/questions/46091111/python-slice-array-at-different-position-on-every-row
 def take_per_row(A, indx, num_elem):
@@ -467,98 +545,3 @@ def crop_revcomp_data(
     # self.regions = pd.DataFrame(self.cur_coords, columns=['chrom', 'start', 'forward_or_reverse', 'is_peak'])
     # print('Regions', self.regions['is_peak'].value_counts())
     return seqs, cts, coords
-
-def get_seq(peaks_df, genome, width):
-    """
-    Same as get_cts, but fetches sequence from a given genome.
-    """
-    vals = []
-    for i, r in peaks_df.iterrows():
-        sequence = str(genome[r['chr']][(r['start']+r['summit'] - width//2):(r['start'] + r['summit'] + width//2)])
-        vals.append(sequence)
-
-    return dna_to_one_hot(vals)
-
-def get_coords(peaks_df, peaks_bool):
-    """
-    Fetch the co-ordinates of the regions in bed file
-    returns a list of tuples with (chrom, summit)
-    """
-    vals = []
-    for _, r in peaks_df.iterrows():
-        vals.append([r['chr'], r['start']+r['summit'], "f", peaks_bool])
-
-    return np.array(vals)
-
-def get_seq_cts_coords(peaks_df, genome, bw, input_width, output_width, peaks_bool):
-    seq = get_seq(peaks_df, genome, input_width)
-    cts = get_cts(peaks_df, bw, output_width)
-    coords = get_coords(peaks_df, peaks_bool)
-    return seq, cts, coords
-
-def debug_subsample(peak_regions, chrom=None):
-    if peak_regions is None:
-        return None
-
-    if chrom is None:
-        chrom = peak_regions['chr'].unique()[0]
-
-    peak_regions = peak_regions[peak_regions['chr'] == chrom]
-    # print('debugging on ', chrom, 'shape', peak_regions.shape)
-    return peak_regions.reset_index(drop=True)
-
-def load_data(bed_regions, nonpeak_regions, genome_fasta, cts_bw_file, inputlen, outputlen, max_jitter):
-    """
-    Load sequences and corresponding base resolution counts for training, 
-    validation regions in peaks and nonpeaks (2 x 2 x 2 = 8 matrices).
-
-    For training peaks/nonpeaks, values for inputlen + 2*max_jitter and outputlen + 2*max_jitter 
-    are returned centered at peak summit. This allows for jittering examples by randomly
-    cropping. Data of width inputlen/outputlen is returned for validation
-    data.
-    """
-    cts_bw = pyBigWig.open(cts_bw_file)
-    genome = pyfaidx.Fasta(genome_fasta)
-
-    train_peaks_seqs=None
-    train_peaks_cts=None
-    train_peaks_coords=None
-    train_nonpeaks_seqs=None
-    train_nonpeaks_cts=None
-    train_nonpeaks_coords=None
-
-    if bed_regions is not None:
-        if not set(['chr', 'start', 'summit']).issubset(bed_regions.columns):
-            bed_regions = expand_3col_to_10col(bed_regions)
-        train_peaks_seqs, train_peaks_cts, train_peaks_coords = get_seq_cts_coords(bed_regions,
-                                                                                   genome,
-                                                                                   cts_bw,
-                                                                                   inputlen+2*max_jitter,
-                                                                                   outputlen+2*max_jitter,
-                                                                                   peaks_bool=1)
-    
-    if nonpeak_regions is not None:
-        if not set(['chr', 'start', 'summit']).issubset(nonpeak_regions.columns):
-            nonpeak_regions = expand_3col_to_10col(nonpeak_regions)
-        train_nonpeaks_seqs, train_nonpeaks_cts, train_nonpeaks_coords = get_seq_cts_coords(nonpeak_regions,
-                                                                                            genome,
-                                                                                            cts_bw,
-                                                                                            inputlen,
-                                                                                            outputlen,
-                                                                                            peaks_bool=0)
-
-    cts_bw.close()
-    genome.close()
-
-    return (train_peaks_seqs, train_peaks_cts, train_peaks_coords,
-            train_nonpeaks_seqs, train_nonpeaks_cts, train_nonpeaks_coords)
-
-def html_to_pdf(input_html, output_pdf):
-    from weasyprint import HTML, CSS
-    css = CSS(string='''
-        @page {
-            size: 1800mm 1300mm;
-            margin: 0in 0in 0in 0in;
-        }
-    ''')
-    HTML(input_html).write_pdf(output_pdf, stylesheets=[css])

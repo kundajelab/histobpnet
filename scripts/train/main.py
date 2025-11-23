@@ -15,12 +15,21 @@ from histobpnet.data_loader.dataset import DataModule
 from histobpnet.eval.metrics import compare_with_observed, save_predictions, load_output_to_regions
 
 # Example usage:
+# OLD
 # python main.py train \
 # --output_dir /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/training \
 # --peaks /large_storage/goodarzilab/valehvpa/projects/scCisTrans/for_chrombpnet_tuto/peaks_no_blacklist.bed \
 # --negatives /large_storage/goodarzilab/valehvpa/projects/scCisTrans/for_chrombpnet_tuto/negatives/lei_negatives.bed \
 # --fold_path /large_storage/goodarzilab/valehvpa/projects/scCisTrans/for_chrombpnet_tuto/splits/instance-20250727_104312/fold_0.json \
 # --max_epochs 2 \
+# --bias_scaled /large_storage/goodarzilab/valehvpa/projects/scCisTrans/for_chrombpnet_tuto/bias_model/ENCSR868FGK_bias_fold_0.h5 \
+# --gpu 0 1 2 3
+#
+# python main.py predict \
+# --output_dir /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/prediction \
+# --checkpoint TODO
+# --peaks /large_storage/goodarzilab/valehvpa/projects/scCisTrans/for_chrombpnet_tuto/peaks_no_blacklist.bed \
+# --negatives /large_storage/goodarzilab/valehvpa/projects/scCisTrans/for_chrombpnet_tuto/negatives/lei_negatives.bed \
 # --bias_scaled /large_storage/goodarzilab/valehvpa/projects/scCisTrans/for_chrombpnet_tuto/bias_model/ENCSR868FGK_bias_fold_0.h5 \
 # --gpu 0 1 2 3
 
@@ -45,6 +54,7 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument('--model_type', type=str, default='chrombpnet',
                        help='Type of model to use')
     # what s bias_scaled as opposed to regular bias model? -> see https://github.com/kundajelab/chrombpnet/wiki/Output-format
+    # TODO which to pass for prediction?
     parser.add_argument('--bias_scaled', type=str, required=True,
                        help='Path to bias scaled model')
     parser.add_argument('--chrombpnet_wo_bias', type=str, default=None,
@@ -68,10 +78,6 @@ def get_parsers():
                             help='Maximum number of training epochs')
     train_parser.add_argument('--precision', type=int, default=32,
                             help='Training precision (16, 32, or 64)')
-    # train_parser.add_argument('--gradient_clip', type=float, default=None,
-    #                         help='Gradient clipping value')
-    # train_parser.add_argument('--force', action='store_true', default=False,
-    #                         help='Force training even if model already exists')
     train_parser.add_argument('--skip_wandb', action='store_true',
                             help='Do not use Weights & Biases logger')
     # TODO_later: is this actually used anywhere?
@@ -85,10 +91,6 @@ def get_parsers():
     predict_parser = subparsers.add_parser('predict', help='Test or predict with the pre-trained histobpnet model.')
     predict_parser.set_defaults(plot=True) # always plot
     add_common_args(predict_parser)
-
-    # predict_bias sub-command
-    predict_bias_parser = subparsers.add_parser('predict_bias', help='Predict bias with the ChromBPNet model.')
-    add_common_args(predict_bias_parser)
 
     # interpret sub-command
     interpret_parser = subparsers.add_parser('interpret', help='Interpret the pre-trained histobpnet model.')
@@ -143,7 +145,6 @@ def train(args, output_dir: str, logger):
     logger.add_to_log(f'fold: {data_config.fold}')
     logger.add_to_log(f'batch_size: {data_config.batch_size}')
 
-    # STOPPED HERE
     datamodule = DataModule(data_config, args)
     # what is this for? -> loss weighting, see model_wrappers.py
     args.alpha = datamodule.median_count / 10
@@ -151,6 +152,7 @@ def train(args, output_dir: str, logger):
     if args.adjust_bias:
         adjust_bias_model_logcounts(model.model.bias, datamodule.negative_dataloader())
 
+    # TODO_later, stopped reviewing here. Walk through this when it comes to training later
     loggers = [L.pytorch.loggers.CSVLogger(output_dir, name=args.name, version=f'fold_{args.fold}')]
 
     trainer = L.Trainer(
@@ -194,19 +196,13 @@ def load_model(args, output_dir: str):
     model = load_pretrained_model(args)
     return model
 
-# TODO review + metrics.py
-def predict(args, model, logger, datamodule=None, mode='predict'):
-    out_dir = os.path.join(args.out_dir, args.name, f'fold_{args.fold}')
-    os.makedirs(os.path.join(out_dir, mode), exist_ok=True)
-
-    logger.add_to_log(f'out_dir: {out_dir}')
+def predict(args, output_dir: str, model, logger, datamodule=None, mode='predict'):
+    logger.add_to_log(f'output_dir: {output_dir}')
     logger.add_to_log(f'model_type: {args.model_type}')
     logger.add_to_log(f'checkpoint: {args.checkpoint}')
     logger.add_to_log(f'chrom: {args.chrom}')
 
     trainer = L.Trainer(logger=False, fast_dev_run=args.fast_dev_run, devices=args.gpu, val_check_interval=None)
-    logger.add_to_log(args.out_dir)
-    logger.add_to_log(f'{args.model_type}')
 
     if datamodule is None:
         data_config = DataConfig.from_argparse_args(args)
@@ -221,13 +217,11 @@ def predict(args, model, logger, datamodule=None, mode='predict'):
 
     chrom = args.chrom
     dataloader, dataset = dm.chrom_dataloader(args.chrom)
-    # log.info(f"{chrom}: {regions['is_peak'].value_counts()}")
     output = trainer.predict(model, dataloader)
-    regions, parsed_output = load_output_to_regions(output, dataset.regions, os.path.join(out_dir, mode, chrom))
-    if mode == 'predict_bias':
-        return
-    model_metrics = compare_with_observed(regions, parsed_output, os.path.join(out_dir, mode, chrom))     
-    save_predictions(output, regions, data_config.chrom_sizes, os.path.join(out_dir, mode, chrom))  
+    od = os.path.join(output_dir, mode, chrom)
+    regions, parsed_output = load_output_to_regions(output, dataset.regions, od)
+    model_metrics = compare_with_observed(regions, parsed_output, od)     
+    save_predictions(output, regions, data_config.chrom_sizes, od, seqlen=args.out_dim)
 
 # TODO review + interpret.py
 def interpret(args, args_d, model, datamodule=None):
@@ -323,14 +317,14 @@ def main(instance_id: str):
         # predict(args, model)
     elif args.command == 'predict':
         model = load_model(args)
-        predict(args, model)
+        predict(args, output_dir, model, logger)
     elif args.command == 'interpret':
         model = load_model(args)
         interpret(args, model)
     elif args.command == 'finetune':
         finetune(args)
         model = load_model(args)
-        predict(args, model)
+        predict(args, output_dir, model, logger)
     else:
         raise ValueError(f"Unknown command: {args.command}")
 

@@ -1,4 +1,4 @@
-# COPIED/ADAPTTED FROM https://github.com/kundajelab/chrombpnet/tree/master/chrombpnet/evaluation/make_bigwigs
+# COPIED/ADAPTED FROM https://github.com/kundajelab/chrombpnet/tree/master/chrombpnet/evaluation/make_bigwigs
 
 import argparse
 from toolbox.utils import get_instance_id, set_random_seed
@@ -9,17 +9,15 @@ import time
 from histobpnet.utils.data_utils import read_chrom_sizes, hdf5_to_bigwig
 
 # Example usage:
-# python attributions_to_bigwig.py \
-#     -h5 /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_borzoi/histone/input_x_grad/gm12878_h3k27ac/instance-20251016_095356/scores_f3c0.h5 \
-#     -r /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_borzoi/histone/input_x_grad/gm12878_h3k27ac/instance-20251016_095356/manually_added/regions.bed \
+# python /home/valehvpa/projects/scCisTrans/histobpnet/scripts/processing/attributions_to_bigwig.py \
+#     -h5 /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_borzoi/histone/input_x_grad/gm12878_h3k27ac/instance-20251119_125710/scores_f3c0.h5 \
+#     -r /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_borzoi/histone/input_x_grad/gm12878_h3k27ac/instance-20251119_125710/regions.bed \
 #     --regions_format bed \
 #     -c /large_storage/goodarzilab/valehvpa/refs/hg38/hg38.chrom.sizes \
 #     -op /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_borzoi/histone/input_x_grad/to_shap \
 #     --output_prefix_stats attributions_stats.txt \
 #     --h5_read_tool h5py \
 #     --hdf5_key grads
-#
-# -h5 /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_borzoi/histone/input_x_grad/gm12878_h3k27ac/instance-20251016_095356/scores_f3c0.h5 -r /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_borzoi/histone/input_x_grad/gm12878_h3k27ac/instance-20251016_095356/manually_added/regions.bed --regions_format bed -c /large_storage/goodarzilab/valehvpa/refs/hg38/hg38.chrom.sizes -op /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_borzoi/histone/input_x_grad/to_shap --output_prefix_stats attributions_stats.txt --h5_read_tool h5py --hdf5_key grads
 
 def get_parsers():
     parser = argparse.ArgumentParser(description="Convert importance scores in hdf5 format to bigwig. The output can be visualized using WashU Epigenome Browser as a dynseq track. Please read all parameter argument requirements. PROVIDE ABSOLUTE PATHS!")

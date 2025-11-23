@@ -110,7 +110,6 @@ class DataModule(L.LightningDataModule):
         self.train_val_data = self.data[self.data.iloc[:, 0].isin(self.val_chroms+self.train_chroms)].reset_index(drop=True)
         self.test_data = self.data[self.data.iloc[:, 0].isin(self.test_chroms)].reset_index(drop=True)
 
-    # TODO go through
     def setup(self, stage='fit'):
         print('Setting up data...'); t0 = time()
 
@@ -170,7 +169,7 @@ class DataModule(L.LightningDataModule):
         # Calculate median count to get weight of count loss
         # valeh: I dont fully understand the logic here (ie why use the median to determine the weight)
         self.train_val_subsampled = concat_peaks_and_subsampled_negatives(
-            self.train_val,
+            self.train_val_data,
             negative_sampling_ratio=self.config.negative_sampling_ratio
         )
         counts_subsampled = get_cts(self.train_val_subsampled, pyBigWig.open(self.config.bigwig), self.config.out_window).sum(-1)
@@ -223,9 +222,8 @@ class DataModule(L.LightningDataModule):
             num_workers=self.config.num_workers, 
         )
 
-    # TODO
-    def chrom_dataloader(self, chrom='chr1', negative_sampling_ratio=-1):
-        dataset = self.chrom_dataset(chrom=chrom, negative_sampling_ratio=negative_sampling_ratio)
+    def chrom_dataloader(self, chrom='chr1'):
+        dataset = self.chrom_dataset(chrom=chrom)
         return torch.utils.data.DataLoader(
             dataset,
             batch_size=self.config.batch_size,
@@ -233,8 +231,7 @@ class DataModule(L.LightningDataModule):
             num_workers=self.config.num_workers,
         ), dataset
 
-    # TODO
-    def chrom_dataset(self, chrom='chr1', negative_sampling_ratio=-1):
+    def chrom_dataset(self, chrom='chr1'):
         if isinstance(chrom, str):
             if chrom in ['train', 'val', 'test']:
                 chrom = getattr(self, f'{chrom}_chroms')
@@ -262,7 +259,6 @@ class DataModule(L.LightningDataModule):
         )
         return dataset
 
-# TODO
 class ChromBPNetDataset(torch.utils.data.Dataset):
     """Generator for genomic sequence data with random cropping and reverse complement augmentation.
     

@@ -9,6 +9,13 @@ from .data_utils import dna_to_one_hot
 def to_numpy(tensor: torch.Tensor) -> np.ndarray:
     return tensor.detach().cpu().numpy()
 
+def softmax(x, temp: int = 1):
+    # TODO_later: what s hte point of de-meaning? (though it s harmless AFAIU)
+    # https://chatgpt.com/c/691bc0cc-2650-832a-bfd3-7ba6dcad2d26
+    x_demeaned = x - np.mean(x, axis=1, keepdims=True)
+    e = np.exp(temp * x_demeaned)
+    return e / np.sum(e, axis=1, keepdims=True)
+
 def pearson_corr(x: torch.Tensor, y: torch.Tensor, dim: int = -1, eps = 1e-8) -> torch.Tensor:
     """
     Compute the Pearson correlation coefficient along a given dimension for multi-dimensional tensors.
@@ -70,10 +77,6 @@ def multinomial_nll(logits, true_counts):
     nll = -(log_factorial_counts + log_likelihood).mean()
 
     return nll
-
-def softmax(x, temp=1):
-    norm_x = x - np.mean(x,axis=1, keepdims=True)
-    return np.exp(temp*norm_x)/np.sum(np.exp(temp*norm_x), axis=1, keepdims=True)
 
 def get_pwms(plus_reads, minus_reads, genome_file):
     """
