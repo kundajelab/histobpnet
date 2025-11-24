@@ -69,11 +69,12 @@ class DataConfig:
         self.rc = rc
         self.outlier_threshold = outlier_threshold
         self.data_type = data_type
-        self.exclude_chroms = exclude_chroms
         self.batch_size = batch_size    
         self.num_workers = num_workers
         self.debug = debug
         self.fold = fold
+
+        self.__post_init__()
         
     @classmethod
     def add_argparse_args(cls, parent_parser: ArgumentParser, **kwargs: Any):

@@ -1,7 +1,10 @@
+import torch
 import torch.nn as nn
 from histobpnet.model.bpnet import BPNet
+from histobpnet.utils.general_utils import _Log, _Exp
 
 # adapted from BPNet in bpnet-lite, credit goes to Jacob Schreiber <jmschreiber91@gmail.com>
+
 class ChromBPNet(nn.Module):
     """A ChromBPNet model.
     See https://github.com/jmschrei/bpnet-lite/tree/master?tab=readme-ov-file#chrombpnet
@@ -13,10 +16,11 @@ class ChromBPNet(nn.Module):
     ):
         super().__init__()
 
-        self.model = BPNet(        
-            out_dim = config.out_dim,
+        # TODO call this acc instead of model
+        self.model = BPNet(
             n_filters = config.n_filters, 
             n_layers = config.n_layers, 
+            out_dim = config.out_dim,
             conv1_kernel_size = config.conv1_kernel_size,
             profile_kernel_size = config.profile_kernel_size,
             n_outputs = config.n_outputs, 
@@ -26,9 +30,16 @@ class ChromBPNet(nn.Module):
         )
 
         self.bias = BPNet(
-            out_dim = config.out_dim,
+            n_filters = 128,
             n_layers = 4,
-            n_filters = 128
+            # the rest is same as self.model
+            out_dim = config.out_dim,
+            conv1_kernel_size = config.conv1_kernel_size,
+            profile_kernel_size = config.profile_kernel_size,
+            n_outputs = config.n_outputs, 
+            n_control_tracks = config.n_control_tracks, 
+            profile_output_bias = config.profile_output_bias, 
+            count_output_bias = config.count_output_bias, 
         )
 
         self._log = _Log()
@@ -56,10 +67,6 @@ class ChromBPNet(nn.Module):
     def forward(self, x):
         """A forward pass through the network.
 
-        This function is usually accessed through calling the model, e.g.
-        doing `model(x)`. The method defines how inputs are transformed into
-        the outputs through interactions with each of the layers.
-
         Parameters
         ----------
         x: torch.tensor, shape=(batch_size, 4, 2114)
@@ -70,6 +77,8 @@ class ChromBPNet(nn.Module):
         y_profile: torch.tensor, shape=(batch_size, 1000)
             The predicted logit profile for each example. Note that this is not
             a normalized value.
+        y_counts: torch.tensor, shape=(batch_size,)
+            The predicted log-count for each example.
         """
         acc_profile, acc_counts = self.model(x)
         bias_profile, bias_counts = self.bias(x)

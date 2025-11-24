@@ -20,15 +20,15 @@ class ChromBPNetConfig(BaseConfig):
 
     def __init__(
         self,
-        out_dim: int=1000,
-        n_filters: int=512, 
-        n_layers: int=8, 
-        conv1_kernel_size: int=21,
-        profile_kernel_size: int=75,
-        n_outputs: int=1, 
-        n_control_tracks: int=0, 
-        profile_output_bias: bool=True, 
-        count_output_bias: bool=True, 
+        out_dim: int = 1000,
+        n_filters: int = 512, 
+        n_layers: int = 8, 
+        conv1_kernel_size: int = 21,
+        profile_kernel_size: int = 75,
+        n_outputs: int = 1,
+        n_control_tracks: int = 0, 
+        profile_output_bias: bool = True, 
+        count_output_bias: bool = True, 
         **kwargs,
     ):
         super().__init__(**kwargs)

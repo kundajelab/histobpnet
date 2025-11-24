@@ -8,8 +8,6 @@ from toolbox.utils import get_instance_id, set_random_seed
 from toolbox.logger import SimpleLogger
 from histobpnet.data_loader.data_config import DataConfig
 from histobpnet.model.model_config import ChromBPNetConfig
-
-# TODO do we need to set random seed before these imports?
 from histobpnet.model.model_wrappers import create_model_wrapper, load_pretrained_model, adjust_bias_model_logcounts
 from histobpnet.data_loader.dataset import DataModule
 from histobpnet.eval.metrics import compare_with_observed, save_predictions, load_output_to_regions
@@ -27,10 +25,10 @@ from histobpnet.eval.metrics import compare_with_observed, save_predictions, loa
 #
 # python main.py predict \
 # --output_dir /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/prediction \
-# --checkpoint TODO
+# --checkpoint /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/pretrained/ENCSR467RSV/fold_0/model.chrombpnet_nobias.fold_0.ENCSR868FGK.h5
+# --bias_scaled /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/pretrained/ENCSR467RSV/fold_0/model.bias_scaled.fold_0.ENCSR868FGK.h5 \
 # --peaks /large_storage/goodarzilab/valehvpa/projects/scCisTrans/for_chrombpnet_tuto/peaks_no_blacklist.bed \
 # --negatives /large_storage/goodarzilab/valehvpa/projects/scCisTrans/for_chrombpnet_tuto/negatives/lei_negatives.bed \
-# --bias_scaled /large_storage/goodarzilab/valehvpa/projects/scCisTrans/for_chrombpnet_tuto/bias_model/ENCSR868FGK_bias_fold_0.h5 \
 # --gpu 0 1 2 3
 
 def add_common_args(parser: argparse.ArgumentParser) -> None:
@@ -45,22 +43,26 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
                        help='Run a quick development test')
     parser.add_argument('--name', type=str, default='',
                        help='Name of the run')
-    parser.add_argument('--checkpoint', '-c', type=str, default=None,
-                       help='Path to model checkpoint')
     parser.add_argument('--gpu', type=int, nargs='+', default=[0],
                        help='GPU device IDs to use')
     parser.add_argument('--chrom', type=str, default='test',
                        help='Chromosome type to analyze (e.g., train, val, test, all)')
     parser.add_argument('--model_type', type=str, default='chrombpnet',
                        help='Type of model to use')
+    # to load a "full" chrombpnet provide chrombpnet_wo_bias for checkpoint and bias_scaled
+    parser.add_argument('--checkpoint', '-c', type=str, default=None,
+                       help='Path to model checkpoint')
     # what s bias_scaled as opposed to regular bias model? -> see https://github.com/kundajelab/chrombpnet/wiki/Output-format
-    # TODO which to pass for prediction?
     parser.add_argument('--bias_scaled', type=str, required=True,
                        help='Path to bias scaled model')
+    # this is only used for training (and I think fine-tuning), TODO move it to their respective subparsers
     parser.add_argument('--chrombpnet_wo_bias', type=str, default=None,
                        help='ChromBPNet model without bias')
     parser.add_argument('--verbose', action='store_true',
                        help='Verbose output')
+    # TODO_later: is this actually used anywhere?
+    parser.add_argument('--alpha', type=float, default=1,
+                        help='Weight for count loss (profile loss will be weighted as 1-alpha).')
     
     # Add model-specific arguments
     ChromBPNetConfig.add_argparse_args(parser)
@@ -80,9 +82,6 @@ def get_parsers():
                             help='Training precision (16, 32, or 64)')
     train_parser.add_argument('--skip_wandb', action='store_true',
                             help='Do not use Weights & Biases logger')
-    # TODO_later: is this actually used anywhere?
-    train_parser.add_argument('--alpha', type=float, default=1,
-                              help='Weight for count loss (profile loss will be weighted as 1-alpha).')
     train_parser.add_argument('--adjust_bias', action='store_true',
                               help='Adjust bias model')
     add_common_args(train_parser)
@@ -100,6 +99,8 @@ def get_parsers():
 
     # finetune sub-command
     finetune_parser = subparsers.add_parser('finetune', help='Finetune the ChromBPNet model.')
+    finetune_parser.add_argument('--adjust_bias', action='store_true',
+                                help='Adjust bias model')
     add_common_args(finetune_parser)
 
     return parser
@@ -206,7 +207,7 @@ def predict(args, output_dir: str, model, logger, datamodule=None, mode='predict
 
     if datamodule is None:
         data_config = DataConfig.from_argparse_args(args)
-        dm = DataModule(data_config)
+        dm = DataModule(data_config, args)
         logger.add_to_log(f'peaks: {data_config.peaks}')
         logger.add_to_log(f'negatives: {data_config.negatives}')
         logger.add_to_log(f'bigwig: {data_config.bigwig}')
@@ -216,7 +217,7 @@ def predict(args, output_dir: str, model, logger, datamodule=None, mode='predict
         dm = datamodule
 
     chrom = args.chrom
-    dataloader, dataset = dm.chrom_dataloader(args.chrom)
+    dataloader, dataset = dm.chrom_dataloader(chrom)
     output = trainer.predict(model, dataloader)
     od = os.path.join(output_dir, mode, chrom)
     regions, parsed_output = load_output_to_regions(output, dataset.regions, od)
@@ -313,17 +314,17 @@ def main(instance_id: str):
 
     if args.command == 'train':
         train(args, output_dir, logger)
-        model = load_model(args)
+        model = load_model(args, output_dir)
         # predict(args, model)
     elif args.command == 'predict':
-        model = load_model(args)
+        model = load_model(args, output_dir)
         predict(args, output_dir, model, logger)
     elif args.command == 'interpret':
-        model = load_model(args)
+        model = load_model(args, output_dir)
         interpret(args, model)
     elif args.command == 'finetune':
-        finetune(args)
-        model = load_model(args)
+        finetune(args, logger)
+        model = load_model(args, output_dir)
         predict(args, output_dir, model, logger)
     else:
         raise ValueError(f"Unknown command: {args.command}")
@@ -335,5 +336,5 @@ if __name__ == '__main__':
     instance_id = get_instance_id()
     print(f"*** Using instance_id: {instance_id}")
 
-    set_random_seed(seed=42)
+    set_random_seed(seed=42, skip_tf=True)
     main(instance_id)

@@ -1,5 +1,3 @@
-# Author: Lei Xiong <jsxlei@gmail.com>
-
 import torch
 import torch.nn.functional as F
 
@@ -205,7 +203,6 @@ class BPNet(torch.nn.Module):
 
         return y_profile.cpu().numpy().squeeze(1), y_count.cpu().numpy().squeeze(-1)
 
-    # STOPPED HERE
     @classmethod
     def from_keras(cls, filename, name='chrombpnet'):
         """Loads a model from ChromBPNet TensorFlow format.
@@ -213,8 +210,7 @@ class BPNet(torch.nn.Module):
         This method will load one of the components of a ChromBPNet model
         from TensorFlow format. Note that a full ChromBPNet model is made up
         of an accessibility model and a bias model and that this will load
-        one of the two. Use `ChromBPNet.from_chrombpnet` to end up with the
-        entire ChromBPNet model.
+        one of the two.
 
         Parameters
         ----------
@@ -238,11 +234,11 @@ class BPNet(torch.nn.Module):
             w = model.get_weights()
             os.system('conda deactivate')
 
+        print(f"Loading {name} model from {filename}", flush=True)
         if 'bpnet_1conv' in w.keys():
             prefix = ""
         else:
             prefix = "wo_bias_"
-        # print(f"Loading {name} model from {filename}", flush=True)
 
         namer = lambda prefix, suffix: '{0}{1}/{0}{1}'.format(prefix, suffix)
         k, b = 'kernel:0', 'bias:0'

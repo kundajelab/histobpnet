@@ -87,7 +87,7 @@ def load_region_df(regions_bed, chrom_sizes=None, in_window=2114, shift=0, is_pe
         filtered_df = df
     filtered_df.columns = ['chr', 'start', 'end', 'name', 'score', 'strand', 'signalValue', 'pValue', 'qValue', 'summit', 'is_peak']
 
-    cprint(f"Formatted {filtered_df.shape[0]} regions from {regions_bed} using width {width}.", logger=logger)
+    cprint(f"Formatting {filtered_df.shape[0]} regions from {regions_bed} using width {width}.", logger=logger)
     filtered_df = format_region(filtered_df, width=width)
 
     # Reset index to avoid index errors
@@ -439,9 +439,28 @@ def random_crop(seqs, labels, seq_crop_width, label_crop_width, coords):
     """
     assert(seqs.shape[1] >= seq_crop_width)
     assert(labels.shape[1] >= label_crop_width)
+
+    # here is a graphic illustrating this
+    #
+    # |<------ seq_width ------>|
+    #   |<--- label_width --->|
+    # seq_width - alpha = label_width (alpha is "crop // 2")
+    #
+    # after cropping both seq and label:
+    # |<------ seq_crop_width ------>|
+    #   |<--- label_crop_width --->|
+    # we must still have:
+    # seq_crop_width - alpha = label_crop_width
+    #
+    # which is the same as: 
+    # seq_width - label_width = seq_crop_width - label_crop_width
+    # aka
+    # seq_width - seq_crop_width = label_width - label_crop_width
+    #
     assert(seqs.shape[1] - seq_crop_width == labels.shape[1] - label_crop_width)
 
-    max_start = seqs.shape[1] - seq_crop_width # This should be the same for both input and output
+    # TODO: pretty sure max_start should be "(seqs.shape[1] - seq_crop_width) // 2"?
+    max_start = seqs.shape[1] - seq_crop_width
     starts = np.random.choice(range(max_start+1), size=seqs.shape[0], replace=True)
     new_coords = coords.copy()
     new_coords[:,1] = new_coords[:,1].astype(int) - (seqs.shape[1]//2) + starts

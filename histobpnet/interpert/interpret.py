@@ -3,7 +3,7 @@
 from tangermeme.deep_lift_shap import _nonlinear, _captum_deep_lift_shap
 from tangermeme.utils import _validate_input
 
-from .model_wrappers import ProfileWrapper, CountWrapper, _ProfileLogitScaling, _Log, _Exp
+from .model_wrappers import _Log, _Exp
 from .data_utils import get_seq, load_region_df, hdf5_to_bigwig, html_to_pdf
 
 import pandas as pd
@@ -19,7 +19,86 @@ from tangermeme.ersatz import dinucleotide_shuffle
 from tangermeme.deep_lift_shap import deep_lift_shap as t_deep_lift_shap
 from tangermeme.deep_lift_shap import _nonlinear
 
+# TODO
+class _ProfileLogitScaling(torch.nn.Module):
+    """This ugly class is necessary because of Captum.
 
+    Captum internally registers classes as linear or non-linear. Because the
+    profile wrapper performs some non-linear operations, those operations must
+    be registered as such. However, the inputs to the wrapper are not the
+    logits that are being modified in a non-linear manner but rather the
+    original sequence that is subsequently run through the model. Hence, this
+    object will contain all of the operations performed on the logits and
+    can be registered.
+
+    Parameters
+    ----------
+    logits: torch.Tensor, shape=(-1, -1)
+        The logits as they come out of a Chrom/BPNet model.
+    """
+
+    def __init__(self):
+        super(_ProfileLogitScaling, self).__init__()
+        self.softmax = torch.nn.Softmax(dim=-1)
+
+    def forward(self, logits):
+        y_softmax = self.softmax(logits)
+        y = logits * y_softmax
+        return y
+        #print("a") 
+        #y_lsm = torch.nn.functional.log_softmax(logits, dim=-1)
+        #return torch.sign(logits) * torch.exp(torch.log(abs(logits)) + y_lsm)
+    
+# TODO
+class ProfileWrapper(torch.nn.Module):
+    """A wrapper class that returns transformed profiles.
+
+    This class takes in a trained model and returns the weighted softmaxed
+    outputs of the first dimension. Specifically, it takes the predicted
+    "logits" and takes the dot product between them and the softmaxed versions
+    of those logits. This is for convenience when using captum to calculate
+    attribution scores.
+
+    Parameters
+    ----------
+    model: torch.nn.Module
+        A torch model to be wrapped.
+    """
+
+    def __init__(self, model):
+        super(ProfileWrapper, self).__init__()
+        self.model = model
+        self.flatten = torch.nn.Flatten()
+        self.scaling = _ProfileLogitScaling()
+
+    def forward(self, x, x_ctl=None, **kwargs):
+        logits = self.model(x, x_ctl=x_ctl, **kwargs)[0]
+        logits = self.flatten(logits)
+        logits = logits - torch.mean(logits, dim=-1, keepdims=True)
+        return self.scaling(logits).sum(dim=-1, keepdims=True)
+
+# TODO
+class CountWrapper(torch.nn.Module):
+    """A wrapper class that only returns the predicted counts.
+
+    This class takes in a trained model and returns only the second output.
+    For BPNet models, this means that it is only returning the count
+    predictions. This is for convenience when using captum to calculate
+    attribution scores.
+
+    Parameters
+    ----------
+    model: torch.nn.Module
+        A torch model to be wrapped.
+    """
+
+    def __init__(self, model):
+            super(CountWrapper, self).__init__()
+            self.model = model
+
+    def forward(self, x, x_ctl=None, **kwargs):
+        return self.model(x, x_ctl=x_ctl, **kwargs)[1]
+	
 def _deep_lift_shap(model, X, args=None, target=0,  batch_size=1024,
 	references=dinucleotide_shuffle, n_shuffles=20, return_references=False, 
 	hypothetical=False, warning_threshold=0.001, additional_nonlinear_ops=None,

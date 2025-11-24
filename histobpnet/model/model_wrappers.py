@@ -12,7 +12,7 @@ from histobpnet.model.chrombpnet import BPNet, ChromBPNet
 from histobpnet.model.model_config import ChromBPNetConfig
 from histobpnet.utils.general_utils import to_numpy, multinomial_nll, pearson_corr
 
-# valeh: ??
+# valeh: ?? TODO
 def adjust_bias_model_logcounts(bias_model, dataloader, verbose=False, device=1):
     """
     Given a bias model, sequences and associated counts, the function adds a 
@@ -46,86 +46,6 @@ def adjust_bias_model_logcounts(bias_model, dataloader, verbose=False, device=1)
     if verbose:
         print('### delta', delta, flush=True)
     return bias_model
-
-# TODO
-class _ProfileLogitScaling(torch.nn.Module):
-    """This ugly class is necessary because of Captum.
-
-    Captum internally registers classes as linear or non-linear. Because the
-    profile wrapper performs some non-linear operations, those operations must
-    be registered as such. However, the inputs to the wrapper are not the
-    logits that are being modified in a non-linear manner but rather the
-    original sequence that is subsequently run through the model. Hence, this
-    object will contain all of the operations performed on the logits and
-    can be registered.
-
-    Parameters
-    ----------
-    logits: torch.Tensor, shape=(-1, -1)
-        The logits as they come out of a Chrom/BPNet model.
-    """
-
-    def __init__(self):
-        super(_ProfileLogitScaling, self).__init__()
-        self.softmax = torch.nn.Softmax(dim=-1)
-
-    def forward(self, logits):
-        y_softmax = self.softmax(logits)
-        y = logits * y_softmax
-        return y
-        #print("a") 
-        #y_lsm = torch.nn.functional.log_softmax(logits, dim=-1)
-        #return torch.sign(logits) * torch.exp(torch.log(abs(logits)) + y_lsm)
-    
-# TODO
-class ProfileWrapper(torch.nn.Module):
-    """A wrapper class that returns transformed profiles.
-
-    This class takes in a trained model and returns the weighted softmaxed
-    outputs of the first dimension. Specifically, it takes the predicted
-    "logits" and takes the dot product between them and the softmaxed versions
-    of those logits. This is for convenience when using captum to calculate
-    attribution scores.
-
-    Parameters
-    ----------
-    model: torch.nn.Module
-        A torch model to be wrapped.
-    """
-
-    def __init__(self, model):
-        super(ProfileWrapper, self).__init__()
-        self.model = model
-        self.flatten = torch.nn.Flatten()
-        self.scaling = _ProfileLogitScaling()
-
-    def forward(self, x, x_ctl=None, **kwargs):
-        logits = self.model(x, x_ctl=x_ctl, **kwargs)[0]
-        logits = self.flatten(logits)
-        logits = logits - torch.mean(logits, dim=-1, keepdims=True)
-        return self.scaling(logits).sum(dim=-1, keepdims=True)
-
-# TODO
-class CountWrapper(torch.nn.Module):
-    """A wrapper class that only returns the predicted counts.
-
-    This class takes in a trained model and returns only the second output.
-    For BPNet models, this means that it is only returning the count
-    predictions. This is for convenience when using captum to calculate
-    attribution scores.
-
-    Parameters
-    ----------
-    model: torch.nn.Module
-        A torch model to be wrapped.
-    """
-
-    def __init__(self, model):
-            super(CountWrapper, self).__init__()
-            self.model = model
-
-    def forward(self, x, x_ctl=None, **kwargs):
-        return self.model(x, x_ctl=x_ctl, **kwargs)[1]
 
 def init_bias(bias, dataloader=None, verbose=False, device=1):
     print(f"Loading bias model from {bias}")
@@ -174,14 +94,16 @@ class ModelWrapper(LightningModule):
         Args:
             model: The underlying model architecture
             alpha: Weight for count loss
-            beta: Weight for profile loss
             **kwargs: Additional arguments to be passed to the model
         """
         
         super().__init__()
         self.alpha = args.alpha
-        # TODO where is this set? And why isnt this just 1-alpha?
-        self.beta = args.beta
+        # where is this set? And why isnt this just 1-alpha?
+        # -> chrombpnet sets this to one, see
+        # https://github.com/kundajelab/chrombpnet/blob/master/chrombpnet/training/models/bpnet_model.py#L94-L97
+        # it doesnt have to sum to 1 either, apparently
+        self.beta = 1
         self.verbose = args.verbose
         
         # Initialize metrics storage
@@ -414,7 +336,6 @@ class ChromBPNetWrapper(BPNetWrapper):
         Args:
             model: ChromBPNet model instance
             alpha: Weight for count loss
-            beta: Weight for profile loss
             bias_scaled: Path to bias model if using scaled bias
             **kwargs: Additional arguments to be passed to the model
         """
@@ -468,6 +389,7 @@ def load_pretrained_model(args):
         if bias_scaled is None and os.path.exists(os.path.join(args.data_dir, 'bias_scaled.h5')):
             bias_scaled = os.path.join(args.data_dir, 'bias_scaled.h5')
         if bias_scaled:
+            print(f"Loading bias model from {bias_scaled}")
             model_wrapper.model.bias = model_wrapper.init_bias(bias_scaled)
         else:
             print(f"No bias model found")
