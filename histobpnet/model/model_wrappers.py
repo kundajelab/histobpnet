@@ -252,7 +252,6 @@ class BPNetWrapper(ModelWrapper):
             count_output_bias=args.count_output_bias, 
         )
 
-    # TODO walk through this
     def _step(self, batch, batch_idx, mode: str = 'train'):
         assert mode in ['train', 'val', 'test', 'predict'], "Invalid mode. Must be one of ['train', 'val', 'test', 'predict']"
 
@@ -261,8 +260,8 @@ class BPNetWrapper(ModelWrapper):
 
         assert x.shape[1] == 4, "Input sequence must be one-hot encoded with 4 channels (A, C, G, T)"
         assert x.shape[0] == true_profile.shape[0], "Batch size of input sequence and profile must match"
-        assert x.shape[2] == true_profile.shape[1], "Sequence length of input sequence and profile must match"
 
+        # TODO why log1p here but in save_predictions we're not undoing this exact transformation?
         true_counts = torch.log1p(true_profile.sum(dim=-1))
 
         y_profile, y_count = self(x)

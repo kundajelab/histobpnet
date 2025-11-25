@@ -10,7 +10,7 @@ import json
 import h5py
 from toolbox.plt_utils import density_scatter
 from histobpnet.utils.general_utils import softmax
-from histobpnet.utils.data_utils import write_bigwig
+from histobpnet.utils.data_utils import write_bigwig, expand_3col_to_10col
 
 def set_plotting_params(figsize = None):
     plt.rcParams["figure.figsize"] = figsize if figsize is not None else (10,5)
@@ -241,7 +241,8 @@ def save_predictions(output, regions, chrom_sizes, out_dir: str, seqlen: int = 1
     # parse output
     parsed_output = {key: np.concatenate([batch[key] for batch in output]) for key in output[0]}
 
-    # TODO valeh: what is this doing?
+    # what is this doing? -> “Convert profile logits → probabilities, convert log-count → total count,
+    # and then form expected counts per position as (total count) × (probability per position).”
     data = softmax(parsed_output['pred_profile']) * np.expand_dims(np.exp(parsed_output['pred_count']), axis=1)
 
     write_bigwig(

@@ -1,9 +1,11 @@
 import os
 import argparse
+import sys
 from lightning.pytorch.strategies import DDPStrategy
 import lightning as L
 import torch
 import json
+import time
 from toolbox.utils import get_instance_id, set_random_seed
 from toolbox.logger import SimpleLogger
 from histobpnet.data_loader.data_config import DataConfig
@@ -11,25 +13,6 @@ from histobpnet.model.model_config import ChromBPNetConfig
 from histobpnet.model.model_wrappers import create_model_wrapper, load_pretrained_model, adjust_bias_model_logcounts
 from histobpnet.data_loader.dataset import DataModule
 from histobpnet.eval.metrics import compare_with_observed, save_predictions, load_output_to_regions
-
-# Example usage:
-# OLD
-# python main.py train \
-# --output_dir /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/training \
-# --peaks /large_storage/goodarzilab/valehvpa/projects/scCisTrans/for_chrombpnet_tuto/peaks_no_blacklist.bed \
-# --negatives /large_storage/goodarzilab/valehvpa/projects/scCisTrans/for_chrombpnet_tuto/negatives/lei_negatives.bed \
-# --fold_path /large_storage/goodarzilab/valehvpa/projects/scCisTrans/for_chrombpnet_tuto/splits/instance-20250727_104312/fold_0.json \
-# --max_epochs 2 \
-# --bias_scaled /large_storage/goodarzilab/valehvpa/projects/scCisTrans/for_chrombpnet_tuto/bias_model/ENCSR868FGK_bias_fold_0.h5 \
-# --gpu 0 1 2 3
-#
-# python main.py predict \
-# --output_dir /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/prediction \
-# --checkpoint /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/pretrained/ENCSR467RSV/fold_0/model.chrombpnet_nobias.fold_0.ENCSR868FGK.h5
-# --bias_scaled /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/pretrained/ENCSR467RSV/fold_0/model.bias_scaled.fold_0.ENCSR868FGK.h5 \
-# --peaks /large_storage/goodarzilab/valehvpa/projects/scCisTrans/for_chrombpnet_tuto/peaks_no_blacklist.bed \
-# --negatives /large_storage/goodarzilab/valehvpa/projects/scCisTrans/for_chrombpnet_tuto/negatives/lei_negatives.bed \
-# --gpu 0 1 2 3
 
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     """Add arguments shared across train, predict, and interpret commands.
@@ -63,6 +46,7 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     # TODO_later: is this actually used anywhere?
     parser.add_argument('--alpha', type=float, default=1,
                         help='Weight for count loss (profile loss will be weighted as 1-alpha).')
+    parser.add_argument("--cvd", dest="cvd", default=None, help="Value to set for CUDA_VISIBLE_DEVICES")
     
     # Add model-specific arguments
     ChromBPNetConfig.add_argparse_args(parser)
@@ -127,7 +111,16 @@ def setup(instance_id: str):
         # convert Namespace to dict
         args_d = vars(args)
         json.dump(args_d, f, indent=4)
-
+    
+    # set CUDA_VISIBLE_DEVICES if specified
+    if args.cvd is not None:
+        print(f"Setting CUDA_VISIBLE_DEVICES to {args.cvd}")
+        os.environ["CUDA_VISIBLE_DEVICES"] = args.cvd
+        os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+        
+    # log the command
+    logger.add_to_log("CMD: " + " ".join(sys.argv) + "\n")
+    
     return args, output_dir, logger
 
 def train(args, output_dir: str, logger):
@@ -203,7 +196,24 @@ def predict(args, output_dir: str, model, logger, datamodule=None, mode='predict
     logger.add_to_log(f'checkpoint: {args.checkpoint}')
     logger.add_to_log(f'chrom: {args.chrom}')
 
-    trainer = L.Trainer(logger=False, fast_dev_run=args.fast_dev_run, devices=args.gpu, val_check_interval=None)
+    trainer = L.Trainer(logger=False, accelerator='gpu', fast_dev_run=args.fast_dev_run, devices=args.gpu, val_check_interval=None)
+
+    # print("accelerator:", trainer.accelerator)              # object, e.g. GPUAccelerator(...)
+    # print("accelerator type:", trainer.accelerator.__class__.__name__)  # "GPUAccelerator", "CPUAccelerator", ...
+    #
+    # print("strategy:", trainer.strategy)                    # e.g. DDPStrategy(...)
+    # print("strategy name:", trainer.strategy.__class__.__name__)
+    #
+    # print("num devices:", trainer.num_devices)              # int, e.g. 1, 2, 8
+    # print("devices:", trainer.device_ids)                   # list of device indices, e.g. [0], [0, 1, 2, 3]
+    #
+    # print("global rank:", trainer.global_rank)              # 0 in single-process, 0..world_size-1 in DDP
+    # print("local rank:", trainer.local_rank)                # rank within the node
+    # print("world size:", trainer.world_size)                # total number of processes
+    #
+    # print("fast_dev_run:", trainer.fast_dev_run)            # True / False / int
+    # print("max_epochs:", trainer.max_epochs)
+    # print("limit_train_batches:", trainer.limit_train_batches)
 
     if datamodule is None:
         data_config = DataConfig.from_argparse_args(args)
@@ -219,7 +229,10 @@ def predict(args, output_dir: str, model, logger, datamodule=None, mode='predict
     chrom = args.chrom
     dataloader, dataset = dm.chrom_dataloader(chrom)
     output = trainer.predict(model, dataloader)
+    # the last batch may be smaller than batch_size (drop_last is False by default)
+    assert (len(output[:-1]) * data_config.batch_size + output[-1]['pred_count'].shape[0]) == dataset.cur_seqs.shape[0]
     od = os.path.join(output_dir, mode, chrom)
+    os.makedirs(od, exist_ok=False)
     regions, parsed_output = load_output_to_regions(output, dataset.regions, od)
     model_metrics = compare_with_observed(regions, parsed_output, od)     
     save_predictions(output, regions, data_config.chrom_sizes, od, seqlen=args.out_dim)
@@ -329,7 +342,7 @@ def main(instance_id: str):
     else:
         raise ValueError(f"Unknown command: {args.command}")
 
-    logger.add_to_log("All done!")
+    return logger
 
 if __name__ == '__main__':
     # get the instance id first so we can print it fast, then continue with the rest
@@ -337,4 +350,7 @@ if __name__ == '__main__':
     print(f"*** Using instance_id: {instance_id}")
 
     set_random_seed(seed=42, skip_tf=True)
-    main(instance_id)
+    t0 = time.time()
+    logger = main(instance_id)
+    tt = time.time() - t0
+    logger.add_to_log(f"All done! Time taken: {tt//3600:.0f} hrs, {(tt%3600)//60:.0f} mins, {tt%60:.1f} secs")

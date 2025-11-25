@@ -76,6 +76,7 @@ def multinomial_nll(logits, true_counts):
     # Compute final NLL
     nll = -(log_factorial_counts + log_likelihood).mean()
 
+    # TODO cf chatgpt for potential bug
     return nll
 
 def get_pwms(plus_reads, minus_reads, genome_file):

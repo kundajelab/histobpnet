@@ -61,12 +61,21 @@ class DataModule(L.LightningDataModule):
         else:
             raise NotImplementedError(f'Unsupported data type: {self.config.data_type}')
         
-        # make sure DataLoader's batch_size is per GPU, not global
-        # see https://lightning.ai/docs/pytorch/stable/accelerators/gpu_faq.html#how-should-i-adjust-the-learning-rate-when-using-multiple-devices
-        # That means we need to adjust the batch_size depending on the
-        # number of devices here, otherwise batch_size will be a function
-        # of n_devices which is not what we want
-        self.effective_batch_size = config.batch_size // len(args.gpu)
+        # in DDP (eg when accelerator='gpu' and devices>1), each device/process (device = GPU)
+        # will use a per_device_batch_size shard of the data (Lightning takes care of the sharding)
+        # so the effective (total) batch size will be per_device_batch_size * len(args.gpu).
+        # if we want this to be equal to config.batch_size (IOW if we want the total batch size to be config.batch_size),
+        # then we need to set per_device_batch_size = config.batch_size // len(args.gpu) as below
+        #
+        # see https://lightning.ai/docs/pytorch/stable/accelerators/gpu_faq.html#how-should-i-adjust-the-batch-size-when-using-multiple-devices
+        # 
+        # btw Lightning doesn't use this per_device_batch_size attribute anywhere internally, we use it
+        # here when building our dataloaders below (eg see train_dataloader)
+        #
+        # Beware: if you change the number of devices and dont run the line below, then your effective (global) batch size
+        # will change accordingly, which may affect training dynamics. On the other hand, you might under-utilize your GPUs
+        # if your config.batch_size is small and you have many GPUs. So pick your poison...
+        self.per_device_batch_size = config.batch_size // len(args.gpu)
 
         # Load and process data
         self._load_regions()
@@ -178,7 +187,7 @@ class DataModule(L.LightningDataModule):
     def train_dataloader(self):
         return torch.utils.data.DataLoader(
             self.train_dataset, 
-            batch_size=self.effective_batch_size,
+            batch_size=self.per_device_batch_size,
             shuffle=True, 
             drop_last=False,
             num_workers=self.config.num_workers, 
@@ -187,7 +196,7 @@ class DataModule(L.LightningDataModule):
     def val_dataloader(self):
         return torch.utils.data.DataLoader(
             self.val_dataset, 
-            batch_size=self.effective_batch_size, 
+            batch_size=self.per_device_batch_size, 
             shuffle=False, 
             num_workers=self.config.num_workers, 
         )
@@ -195,7 +204,7 @@ class DataModule(L.LightningDataModule):
     def test_dataloader(self):
         return torch.utils.data.DataLoader(
             self.test_dataset, 
-            batch_size=self.effective_batch_size, 
+            batch_size=self.per_device_batch_size, 
             shuffle=False, 
             num_workers=self.config.num_workers, 
         )
@@ -306,6 +315,13 @@ class ChromBPNetDataset(torch.utils.data.Dataset):
         peak_seqs, peak_cts, peak_coords, nonpeak_seqs, nonpeak_cts, nonpeak_coords = load_data(
             peak_regions, nonpeak_regions, genome_fasta, cts_bw_file, inputlen, outputlen, max_jitter
         )
+
+        if (peak_seqs.sum(axis=-1) == 1).all():
+            print('One-hot encoding verified for peak sequences.')
+        else:
+            # TODO figure out why this happens -> see get_seq in data_utils.py
+            # I guess some of the corresponding sequences have letters other than ACGT?
+            print('Warning: Peak sequences are not one-hot encoded?!')
 
         # Store data
         self.peak_seqs, self.nonpeak_seqs = peak_seqs, nonpeak_seqs

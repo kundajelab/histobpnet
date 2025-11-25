@@ -415,8 +415,6 @@ def debug_subsample(peak_regions, chrom=None):
     # print('debugging on ', chrom, 'shape', peak_regions.shape)
     return peak_regions.reset_index(drop=True)
 
-# valeh: REVIEWED ^^^^^^
-
 # https://stackoverflow.com/questions/46091111/python-slice-array-at-different-position-on-every-row
 def take_per_row(A, indx, num_elem):
     """
@@ -425,6 +423,9 @@ def take_per_row(A, indx, num_elem):
     """
 
     all_indx = indx[:,None] + np.arange(num_elem)
+    # valeh: this is basically taking all the rows and eveyrhting across the channel axis
+    # (ACGT) and only slicing across the length axis using all_indx.
+    # we can't do A[:, all_indx] for some reason but this syntax below wokrs as expected
     return A[np.arange(all_indx.shape[0])[:,None], all_indx]
 
 def random_crop(seqs, labels, seq_crop_width, label_crop_width, coords):
@@ -483,12 +484,10 @@ def random_rev_comp(seqs, labels, coords, frac=0.5):
 
     return seqs, labels, coords
 
-def crop_revcomp_augment(seqs, labels, coords, add_revcomp, rc_frac=0.5, shuffle=False):
+def revcomp_shuffle_augment(seqs, labels, coords, add_revcomp, rc_frac=0.5, shuffle=False):
     """
     seqs: B x IL x 4
     labels: B x OL
-
-    Applies random crop to seqs and labels and reverse complements rc_frac. 
     """
     assert(seqs.shape[0]==labels.shape[0])
 
@@ -526,6 +525,7 @@ def crop_revcomp_data(
         )
         
         # Sample negative examples
+        # valeh: why is this needed btw? dont we do this during pre-processing?
         if negative_sampling_ratio > 0:
             sampled_nonpeak_seqs, sampled_nonpeak_cts, sampled_nonpeak_coords = subsample_nonpeak_data(
                 nonpeak_seqs, nonpeak_cts, nonpeak_coords,
@@ -538,7 +538,6 @@ def crop_revcomp_data(
             seqs = np.vstack([cropped_peaks, nonpeak_seqs])
             cts = np.vstack([cropped_cnts, nonpeak_cts])
             coords = np.vstack([cropped_coords, nonpeak_coords])
-
     elif peak_seqs is not None:
         # Only peak data
         cropped_peaks, cropped_cnts, cropped_coords = random_crop(
@@ -547,7 +546,6 @@ def crop_revcomp_data(
         seqs = cropped_peaks
         cts = cropped_cnts
         coords = cropped_coords
-
     elif nonpeak_seqs is not None:
         # Only non-peak data
         seqs = nonpeak_seqs
@@ -556,11 +554,9 @@ def crop_revcomp_data(
     else:
         raise ValueError("Both peak and non-peak arrays are empty")
 
-    # Apply augmentation
-    seqs, cts, coords = crop_revcomp_augment(
-        seqs, cts, coords, inputlen, outputlen,
+    # Apply revcomp and shuffle augmentations
+    seqs, cts, coords = revcomp_shuffle_augment(
+        seqs, cts, coords,
         add_revcomp, shuffle=shuffle
     )
-    # self.regions = pd.DataFrame(self.cur_coords, columns=['chrom', 'start', 'forward_or_reverse', 'is_peak'])
-    # print('Regions', self.regions['is_peak'].value_counts())
     return seqs, cts, coords

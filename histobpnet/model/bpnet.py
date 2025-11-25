@@ -234,6 +234,51 @@ class BPNet(torch.nn.Module):
             w = model.get_weights()
             os.system('conda deactivate')
 
+        # we expect 31 keys in the saved model weights:
+        #
+        # 'add'
+        # 'add_1'
+        # 'add_2'
+        # 'add_3'
+        # 'add_4'
+        # 'add_5'
+        # 'add_6'
+        # 'add_7'
+        # 'gap'
+        # 'sequence'
+        # 'wo_bias_bpnet_1conv'
+        # 'wo_bias_bpnet_1crop'
+        # 'wo_bias_bpnet_1st_conv'
+        # 'wo_bias_bpnet_2conv'
+        # 'wo_bias_bpnet_2crop'
+        # 'wo_bias_bpnet_3conv'
+        # 'wo_bias_bpnet_3crop'
+        # 'wo_bias_bpnet_4conv'
+        # 'wo_bias_bpnet_4crop'
+        # 'wo_bias_bpnet_5conv'
+        # 'wo_bias_bpnet_5crop'
+        # 'wo_bias_bpnet_6conv'
+        # 'wo_bias_bpnet_6crop'
+        # 'wo_bias_bpnet_7conv'
+        # 'wo_bias_bpnet_7crop'
+        # 'wo_bias_bpnet_8conv'
+        # 'wo_bias_bpnet_8crop'
+        # 'wo_bias_bpnet_logcount_predictions'
+        # 'wo_bias_bpnet_logits_profile_predictions'
+        # 'wo_bias_bpnet_logitt_before_flatten'
+        # 'wo_bias_bpnet_prof_out_precrop'
+        #
+        # ['add', 'add_1', ..., 'add_7'] are from the residual connections (there is n_layers of them)
+        # ['wo_bias_bpnet_1conv', ..., 'wo_bias_bpnet_8conv'] are the dilated convolutions (there is n_layers of them)
+        # ['wo_bias_bpnet_1crop', ..., 'wo_bias_bpnet_8crop'] are also for the dilated convolutions?
+        # 'wo_bias_bpnet_1st_conv' is the first (non-dilated) convolution applied to the input before passing it into the dilated convolutions tower
+        # 'wo_bias_bpnet_prof_out_precrop' is the last (non-dilated) convolution applied to the output of the dilated convolution tower
+        # 'wo_bias_bpnet_logcount_predictions' is the final Dense layer (after the dilated conv tower) that predicts the logcounts
+        # 'gap' is ?
+        # 'sequence' is ?
+        # 'wo_bias_bpnet_logitt_before_flatten' ?
+        # 'wo_bias_bpnet_logits_profile_predictions' is ?
+
         print(f"Loading {name} model from {filename}", flush=True)
         if 'bpnet_1conv' in w.keys():
             prefix = ""
