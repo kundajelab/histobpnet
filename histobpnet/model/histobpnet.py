@@ -27,7 +27,6 @@ class HistoBPNet(nn.Module):
 
         self._log = _Log()
         self._exp1 = _Exp()
-        self._exp2 = _Exp()
 
         self.n_control_tracks = config.n_control_tracks
 
@@ -47,7 +46,7 @@ class HistoBPNet(nn.Module):
                 if hasattr(m, 'bias') and m.bias is not None:
                     nn.init.zeros_(m.bias)
 
-    def forward(self, x):
+    def forward(self, x, observed_ctrl=None):
         """A forward pass through the network.
 
         Parameters
@@ -62,13 +61,13 @@ class HistoBPNet(nn.Module):
             a normalized value.
         y_counts: torch.tensor, shape=(batch_size,)
             The predicted log-count for each example.
+        observed_ctrl: torch.tensor, shape=(batch_size, n_control_tracks)
+            The observed log of the sum of the (scaled) raw input control counts in each bin.
         """
-        acc_profile, acc_counts = self.model(x)
-        bias_profile, bias_counts = self.bias(x)
+        binned_logits = self.model(x, x_ctl_hist=observed_ctrl)
 
-        y_profile = acc_profile + bias_profile
-        # combine the two logit outputs via log-sum-exp
-        y_counts = self._log(self._exp1(acc_counts) + self._exp2(bias_counts))
+        # TODO hmm does this make sense?
+        y_counts = self._log(self._exp1(binned_logits))
         
         # DO NOT SQUEEZE y_counts, as it is needed for running deep_lift_shap
-        return y_profile.squeeze(1), y_counts #.squeeze() 
+        return y_counts #.squeeze() 

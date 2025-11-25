@@ -65,10 +65,16 @@ def get_parsers():
                             help='Maximum number of training epochs')
     train_parser.add_argument('--precision', type=int, default=32,
                             help='Training precision (16, 32, or 64)')
+    train_parser.add_argument('--gradient_clip', type=float, default=None,
+                            help='Gradient clipping value')
     train_parser.add_argument('--skip_wandb', action='store_true',
                             help='Do not use Weights & Biases logger')
     train_parser.add_argument('--adjust_bias', action='store_true',
                               help='Adjust bias model')
+    train_parser.add_argument('--lr', type=float, default=0.001,
+                              help='Learning rate')
+    train_parser.add_argument('--optimizer_eps', type=float, default=1e-7,
+                              help='Adam optimizer epsilon value')
     add_common_args(train_parser)
 
     # predict sub-command
@@ -86,6 +92,8 @@ def get_parsers():
     finetune_parser = subparsers.add_parser('finetune', help='Finetune the model.')
     finetune_parser.add_argument('--adjust_bias', action='store_true',
                                 help='Adjust bias model')
+    finetune_parser.add_argument('--gradient_clip', type=float, default=None,
+                                help='Gradient clipping value')
     add_common_args(finetune_parser)
 
     return parser
@@ -125,9 +133,9 @@ def setup(instance_id: str):
     return args, output_dir, logger
 
 def train(args, output_dir: str, logger):
+    assert args.model_type == 'histobpnet', "Train currently only supported for histobpnet"
+
     logger.add_to_log(f"Training with model type: {args.model_type}")
-    logger.add_to_log(f'bias: {args.bias_scaled}')
-    logger.add_to_log(f'adjust_bias: {args.adjust_bias}')
     logger.add_to_log(f'precision: {args.precision}')
     logger.add_to_log(f'alpha: {args.alpha}')
     logger.add_to_log(f'n_filters: {args.n_filters}')
@@ -141,18 +149,14 @@ def train(args, output_dir: str, logger):
     logger.add_to_log(f'batch_size: {data_config.batch_size}')
 
     datamodule = DataModule(data_config, args)
-    # what is this for? -> loss weighting, see model_wrappers.py
-    args.alpha = datamodule.median_count / 10
-    model = create_model_wrapper(args)
-    if args.adjust_bias:
-        adjust_bias_model_logcounts(model.model.bias, datamodule.negative_dataloader())
+    args.alpha = 1
+    model_wrapper = create_model_wrapper(args)
 
-    # TODO_later, stopped reviewing here. Walk through this when it comes to training later
     loggers = [L.pytorch.loggers.CSVLogger(output_dir, name=args.name, version=f'fold_{args.fold}')]
 
     trainer = L.Trainer(
         max_epochs=args.max_epochs,
-        # valeh: why not 0?
+        # valeh: why not 0? TODO
         reload_dataloaders_every_n_epochs=1,
         check_val_every_n_epoch=1, # 5
         accelerator='gpu',
@@ -171,14 +175,16 @@ def train(args, output_dir: str, logger):
         precision=args.precision,
         gradient_clip_val=args.gradient_clip,
     )
-    trainer.fit(model, datamodule)
-    if args.model_type == 'chrombpnet' and not args.fast_dev_run:
+    trainer.fit(model_wrapper, datamodule)
+    if not args.fast_dev_run:
         # save the raw weights (state_dict) of the underlying model.
         # Even though Lightning’s ModelCheckpoint already saves .ckpt files:
         # .ckpt includes Lightning-specific training state (optimizer, scheduler, etc.)
         # saving just .state_dict() gives a clean PyTorch model that you can load via model.load_state_dict(...)
         # in a plain nn.Module
-        torch.save(model.model.model.state_dict(), os.path.join(output_dir, f'checkpoints/{args.model_type}.pt'))
+        ckpt_dir = os.path.join(output_dir, "checkpoints")
+        os.makedirs(ckpt_dir, exist_ok=False)
+        torch.save(model_wrapper.model.model.state_dict(), os.path.join(ckpt_dir, f'{args.model_type}.pt'))
 
 def load_model(args, output_dir: str):
     if args.checkpoint is None:
@@ -199,6 +205,7 @@ def predict(args, output_dir: str, model, logger, datamodule=None, mode='predict
 
     trainer = L.Trainer(logger=False, accelerator='gpu', fast_dev_run=args.fast_dev_run, devices=args.gpu, val_check_interval=None)
 
+    # TODO_later log these
     # print("accelerator:", trainer.accelerator)              # object, e.g. GPUAccelerator(...)
     # print("accelerator type:", trainer.accelerator.__class__.__name__)  # "GPUAccelerator", "CPUAccelerator", ...
     #
@@ -327,9 +334,10 @@ def main(instance_id: str):
     # wandb.init(project="expression-models", name=config["run_name"]+"|"+instance_id, config=config)
 
     if args.command == 'train':
+        assert args.model_type == 'histobpnet', "Train currently only supported for histobpnet"
         train(args, output_dir, logger)
         model = load_model(args, output_dir)
-        # predict(args, model)
+        predict(args, model)
     elif args.command == 'predict':
         model = load_model(args, output_dir)
         predict(args, output_dir, model, logger)

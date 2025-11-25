@@ -117,7 +117,7 @@ class BPNet(torch.nn.Module):
             bias=count_output_bias
         )
 
-    def forward(self, x, x_ctl=None):
+    def forward(self, x, x_ctl=None, x_ctl_hist=None):
         """A forward pass of the model.
 
         Parameters
@@ -152,11 +152,14 @@ class BPNet(torch.nn.Module):
             # else:
             #     x_ctl = F.pad(x_ctl, (-crop_size, -crop_size))
 
+        if x_ctl_hist is not None:
+            assert x_ctl_hist.shape[0] == x.shape[0], "Batch size of x_ctl_hist must match that of x"
+
         if self.fconv is None:
             pred_profile = None
         else:
             pred_profile = self.profile_head(x, x_ctl=x_ctl) # before log_softmax
-        pred_count = self.count_head(x, x_ctl=x_ctl) #.squeeze(-1) # (batch_size, 1)
+        pred_count = self.count_head(x, x_ctl=x_ctl, x_ctl_hist=x_ctl_hist) #.squeeze(-1) # (batch_size, 1)
 
         return pred_profile, pred_count
 
@@ -189,7 +192,7 @@ class BPNet(torch.nn.Module):
         
         return pred_profile
 
-    def count_head(self, x, x_ctl=None):
+    def count_head(self, x, x_ctl=None, x_ctl_hist=None):
         # x is of shape (batch_size, n_filters, length)
         # pred_count shape: (batch_size, n_filters)
         pred_count = self.global_avg_pool(x).squeeze(-1)
@@ -198,6 +201,9 @@ class BPNet(torch.nn.Module):
             # output shape: (batch_size, 1)
             x_ctl = torch.sum(x_ctl, dim=(1, 2)).unsqueeze(-1)
             pred_count = torch.cat([pred_count, torch.log1p(x_ctl)], dim=-1)
+        # x_ctl_hist is of shape (batch_size, num_bins)
+        if x_ctl_hist is not None:
+            pred_count = torch.cat([pred_count, x_ctl_hist], dim=-1)
         pred_count = self.linear(pred_count)
         return pred_count
     
@@ -216,7 +222,7 @@ class BPNet(torch.nn.Module):
         return y_profile.cpu().numpy().squeeze(1), y_count.cpu().numpy().squeeze(-1)
 
     @classmethod
-    def from_keras(cls, filename, name='chrombpnet'):
+    def from_keras(cls, filename, name='chrombpnet', instance=None):
         """Loads a model from ChromBPNet TensorFlow format.
     
         This method will load one of the components of a ChromBPNet model
@@ -293,8 +299,11 @@ class BPNet(torch.nn.Module):
         name = namer(prefix, "bpnet_1conv")
         n_filters = w[name][k].shape[2]
 
-        model = BPNet(n_layers=n_layers, n_filters=n_filters, n_outputs=1,
-            n_control_tracks=0)
+        if instance is None:
+            model = BPNet(n_layers=n_layers, n_filters=n_filters, n_outputs=1,
+                n_control_tracks=0)
+        else:
+            model = instance
 
         convert_w = lambda x: torch.nn.Parameter(torch.tensor(
             x[:]).permute(2, 1, 0))

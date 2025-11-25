@@ -182,20 +182,15 @@ class DataModule(L.LightningDataModule):
 
     @cached_property
     def median_count(self):
-        if self.config.data_type == 'histone_profile':
-            # TODO update to whatever is the case for chrombpnet
-            # TODO_later figure out what to do here
-            return 3
-        else:
-            import pyBigWig
-            # Calculate median count to get weight of count loss
-            # valeh: I dont fully understand the logic here (ie why use the median to determine the weight)
-            self.train_val_subsampled = concat_peaks_and_subsampled_negatives(
-                self.train_val_data,
-                negative_sampling_ratio=self.config.negative_sampling_ratio
-            )
-            counts_subsampled = get_cts(self.train_val_subsampled, pyBigWig.open(self.config.bigwig), self.config.out_window).sum(-1)
-            return np.median(counts_subsampled)
+        import pyBigWig
+        # Calculate median count to get weight of count loss
+        # valeh: I dont fully understand the logic here (ie why use the median to determine the weight)
+        self.train_val_subsampled = concat_peaks_and_subsampled_negatives(
+            self.train_val_data,
+            negative_sampling_ratio=self.config.negative_sampling_ratio
+        )
+        counts_subsampled = get_cts(self.train_val_subsampled, pyBigWig.open(self.config.bigwig), self.config.out_window).sum(-1)
+        return np.median(counts_subsampled)
 
     def train_dataloader(self):
         return torch.utils.data.DataLoader(
