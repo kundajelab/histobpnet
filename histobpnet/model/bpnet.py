@@ -58,6 +58,7 @@ class BPNet(torch.nn.Module):
         count_output_bias: bool = True,
         name: str = None,
         verbose: bool = True,
+        n_count_outputs: int = 1,
     ):
         super().__init__()
 
@@ -91,22 +92,28 @@ class BPNet(torch.nn.Module):
             torch.nn.ReLU() for i in range(1, self.n_layers+1)
         ])
 
-        # profile prediction
-        # afaiu this is not adding control element-wise but rather concatenating along channel axis
-        # and then convolving, which is equivalent to adding element-wise after convolving separately
-        # (https://chatgpt.com/c/6922866e-7c0c-8329-91fd-4d3bc1831921).
-        # fwiw I think the original bpnet arch is doing the same thing: see profile_bias_module in
-        # https://github.com/kundajelab/bpnet/blob/master/bpnet/model/arch.py
-        self.fconv = torch.nn.Conv1d(n_filters+n_control_tracks, n_outputs, 
-            kernel_size=profile_kernel_size, padding='valid', bias=profile_output_bias)
+        if profile_kernel_size > 0:
+            # profile prediction
+            # afaiu this is not adding control element-wise but rather concatenating along channel axis
+            # and then convolving, which is equivalent to adding element-wise after convolving separately
+            # (https://chatgpt.com/c/6922866e-7c0c-8329-91fd-4d3bc1831921).
+            # fwiw I think the original bpnet arch is doing the same thing: see profile_bias_module in
+            # https://github.com/kundajelab/bpnet/blob/master/bpnet/model/arch.py
+            self.fconv = torch.nn.Conv1d(n_filters+n_control_tracks, n_outputs, 
+                kernel_size=profile_kernel_size, padding='valid', bias=profile_output_bias)
+        else:
+            self.fconv = None
 
         # count prediction
         n_count_control = 1 if n_control_tracks > 0 else 0
+        # hack for histobpnet, TODO_later make better
+        if n_count_outputs > 1:
+            n_count_control = n_control_tracks
         # will be used to pool (average) over sequence length
         self.global_avg_pool = torch.nn.AdaptiveAvgPool1d(1)
         self.linear = torch.nn.Linear(
             n_filters+n_count_control,
-            1,
+            n_count_outputs,
             bias=count_output_bias
         )
 
@@ -145,7 +152,10 @@ class BPNet(torch.nn.Module):
             # else:
             #     x_ctl = F.pad(x_ctl, (-crop_size, -crop_size))
 
-        pred_profile = self.profile_head(x, x_ctl=x_ctl) # before log_softmax
+        if self.fconv is None:
+            pred_profile = None
+        else:
+            pred_profile = self.profile_head(x, x_ctl=x_ctl) # before log_softmax
         pred_count = self.count_head(x, x_ctl=x_ctl) #.squeeze(-1) # (batch_size, 1)
 
         return pred_profile, pred_count
@@ -192,6 +202,8 @@ class BPNet(torch.nn.Module):
         return pred_count
     
     def predict(self, x, forward_only=True):
+        raise ValueError("Putting this here for now so I know when it's called!")
+    
         y_profile, y_count = self(x)
         y_count = torch.exp(y_count)
 
@@ -236,37 +248,21 @@ class BPNet(torch.nn.Module):
 
         # we expect 31 keys in the saved model weights:
         #
-        # 'add'
-        # 'add_1'
-        # 'add_2'
-        # 'add_3'
-        # 'add_4'
-        # 'add_5'
-        # 'add_6'
-        # 'add_7'
-        # 'gap'
-        # 'sequence'
-        # 'wo_bias_bpnet_1conv'
-        # 'wo_bias_bpnet_1crop'
+        # 'add', 'add_1', 'add_2', 'add_3', 'add_4', 'add_5', 'add_6', 'add_7',
+        #
+        # 'wo_bias_bpnet_1conv', 'wo_bias_bpnet_2conv', 'wo_bias_bpnet_3conv',
+        # 'wo_bias_bpnet_4conv', 'wo_bias_bpnet_5conv', 'wo_bias_bpnet_6conv',
+        # 'wo_bias_bpnet_7conv', 'wo_bias_bpnet_8conv',
+        #
+        # 'wo_bias_bpnet_1crop', 'wo_bias_bpnet_2crop', 'wo_bias_bpnet_3crop',
+        # 'wo_bias_bpnet_4crop', 'wo_bias_bpnet_5crop', 'wo_bias_bpnet_6crop',
+        # 'wo_bias_bpnet_7crop', 'wo_bias_bpnet_8crop',
+        #
         # 'wo_bias_bpnet_1st_conv'
-        # 'wo_bias_bpnet_2conv'
-        # 'wo_bias_bpnet_2crop'
-        # 'wo_bias_bpnet_3conv'
-        # 'wo_bias_bpnet_3crop'
-        # 'wo_bias_bpnet_4conv'
-        # 'wo_bias_bpnet_4crop'
-        # 'wo_bias_bpnet_5conv'
-        # 'wo_bias_bpnet_5crop'
-        # 'wo_bias_bpnet_6conv'
-        # 'wo_bias_bpnet_6crop'
-        # 'wo_bias_bpnet_7conv'
-        # 'wo_bias_bpnet_7crop'
-        # 'wo_bias_bpnet_8conv'
-        # 'wo_bias_bpnet_8crop'
-        # 'wo_bias_bpnet_logcount_predictions'
-        # 'wo_bias_bpnet_logits_profile_predictions'
-        # 'wo_bias_bpnet_logitt_before_flatten'
-        # 'wo_bias_bpnet_prof_out_precrop'
+        #
+        # 'wo_bias_bpnet_logcount_predictions', 'wo_bias_bpnet_logits_profile_predictions;
+        # 'wo_bias_bpnet_logitt_before_flatten', 'wo_bias_bpnet_prof_out_precrop'
+        # 'gap', 'sequence'
         #
         # ['add', 'add_1', ..., 'add_7'] are from the residual connections (there is n_layers of them)
         # ['wo_bias_bpnet_1conv', ..., 'wo_bias_bpnet_8conv'] are the dilated convolutions (there is n_layers of them)
@@ -274,10 +270,8 @@ class BPNet(torch.nn.Module):
         # 'wo_bias_bpnet_1st_conv' is the first (non-dilated) convolution applied to the input before passing it into the dilated convolutions tower
         # 'wo_bias_bpnet_prof_out_precrop' is the last (non-dilated) convolution applied to the output of the dilated convolution tower
         # 'wo_bias_bpnet_logcount_predictions' is the final Dense layer (after the dilated conv tower) that predicts the logcounts
-        # 'gap' is ?
-        # 'sequence' is ?
-        # 'wo_bias_bpnet_logitt_before_flatten' ?
-        # 'wo_bias_bpnet_logits_profile_predictions' is ?
+        # 'gap' is GlobalAveragePooling
+        # Idk about these: 'sequence', 'wo_bias_bpnet_logitt_before_flatten', 'wo_bias_bpnet_logits_profile_predictions'
 
         print(f"Loading {name} model from {filename}", flush=True)
         if 'bpnet_1conv' in w.keys():
@@ -319,11 +313,16 @@ class BPNet(torch.nn.Module):
 
         prefix = prefix + "bpnet_" if prefix != "" else ""
 
-        fname = namer(prefix, 'prof_out_precrop')
-        model.fconv.weight = convert_w(w[fname][k])
-        model.fconv.bias = convert_b(w[fname][b])
+        if model.fconv is not None:
+            fname = namer(prefix, 'prof_out_precrop')
+            model.fconv.weight = convert_w(w[fname][k])
+            model.fconv.bias = convert_b(w[fname][b])
 
-        name = namer(prefix, "logcount_predictions")
-        model.linear.weight = torch.nn.Parameter(torch.tensor(w[name][k][:].T))
-        model.linear.bias = convert_b(w[name][b])
+        if model.fconv is not None:
+            # right now model.fconv is None means we're running for histobpnet
+            # TODO_later detect this in a cleaner way maybe
+            # also TODO do we want to / can we partially initialize the weights or something?
+            name = namer(prefix, "logcount_predictions")
+            model.linear.weight = torch.nn.Parameter(torch.tensor(w[name][k][:].T))
+            model.linear.bias = convert_b(w[name][b])
         return model

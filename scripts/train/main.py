@@ -9,7 +9,7 @@ import time
 from toolbox.utils import get_instance_id, set_random_seed
 from toolbox.logger import SimpleLogger
 from histobpnet.data_loader.data_config import DataConfig
-from histobpnet.model.model_config import ChromBPNetConfig
+from histobpnet.model.model_config import ChromBPNetConfig, HistoBPNetConfig
 from histobpnet.model.model_wrappers import create_model_wrapper, load_pretrained_model, adjust_bias_model_logcounts
 from histobpnet.data_loader.dataset import DataModule
 from histobpnet.eval.metrics import compare_with_observed, save_predictions, load_output_to_regions
@@ -50,6 +50,7 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     
     # Add model-specific arguments
     ChromBPNetConfig.add_argparse_args(parser)
+    HistoBPNetConfig.add_argparse_args(parser)
 
     # Add data configuration arguments
     DataConfig.add_argparse_args(parser)
@@ -82,7 +83,7 @@ def get_parsers():
     add_common_args(interpret_parser)
 
     # finetune sub-command
-    finetune_parser = subparsers.add_parser('finetune', help='Finetune the ChromBPNet model.')
+    finetune_parser = subparsers.add_parser('finetune', help='Finetune the model.')
     finetune_parser.add_argument('--adjust_bias', action='store_true',
                                 help='Adjust bias model')
     add_common_args(finetune_parser)

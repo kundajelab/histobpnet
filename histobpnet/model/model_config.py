@@ -42,3 +42,34 @@ class ChromBPNetConfig(BaseConfig):
         self.n_control_tracks = n_control_tracks
         self.profile_output_bias = profile_output_bias
         self.count_output_bias = count_output_bias
+
+class HistoBPNetConfig(BaseConfig):
+    model_type = "histobpnet"
+
+    def __init__(
+        self,
+        out_dim: int = 0,
+        n_filters: int = 512, 
+        n_layers: int = 8, 
+        conv1_kernel_size: int = 21,
+        profile_kernel_size: int = 0,
+        n_outputs: int = 1,
+        # TODO fix bins
+        output_bins: str = "1000, 2000, 4000, 8000, 16000",
+        profile_output_bias: bool = True, 
+        count_output_bias: bool = True, 
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+
+        self.out_dim = out_dim
+        self.n_filters = n_filters
+        self.n_layers = n_layers
+        self.conv1_kernel_size = conv1_kernel_size
+        self.profile_kernel_size = profile_kernel_size
+        self.n_outputs = n_outputs
+        self.output_bins = [int(x) for x in output_bins.split(",")]
+        self.n_control_tracks = len(self.output_bins)
+        self.n_count_outputs = len(self.output_bins)
+        self.profile_output_bias = profile_output_bias
+        self.count_output_bias = count_output_bias

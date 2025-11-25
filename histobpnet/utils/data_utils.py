@@ -164,13 +164,24 @@ def get_coords(peaks_df, peaks_bool):
 
     return np.array(vals)
 
-def get_seq_cts_coords(peaks_df, genome, bw, input_width, output_width, peaks_bool):
+def get_seq_cts_coords(peaks_df, genome, bw, bw_ctrl, input_width, output_width, peaks_bool):
     seq = get_seq(peaks_df, genome, input_width)
     cts = get_cts(peaks_df, bw, output_width)
+    cts_ctrl = get_cts(peaks_df, bw_ctrl, output_width) if bw_ctrl is not None else None
     coords = get_coords(peaks_df, peaks_bool)
-    return seq, cts, coords
+    return seq, cts, cts_ctrl, coords
 
-def load_data(bed_regions, nonpeak_regions, genome_fasta, cts_bw_file, inputlen, outputlen, max_jitter):
+def load_data(
+    bed_regions,
+    nonpeak_regions,
+    genome_fasta,
+    cts_bw_file,
+    cts_ctrl_bw_file,
+    inputlen,
+    outputlen,
+    output_bins,
+    max_jitter
+):
     """
     Load sequences and corresponding base resolution counts for training, 
     validation regions in peaks and nonpeaks (2 x 2 x 2 = 8 matrices).
@@ -181,42 +192,66 @@ def load_data(bed_regions, nonpeak_regions, genome_fasta, cts_bw_file, inputlen,
     data.
     """
     cts_bw = pyBigWig.open(cts_bw_file)
+    cts_ctrl_bw = pyBigWig.open(cts_ctrl_bw_file) if cts_ctrl_bw_file is not None else None
     genome = pyfaidx.Fasta(genome_fasta)
 
+    if output_bins != "":
+        output_bins = [int(x) for x in output_bins.split(",")]
+        output_len = max(output_bins)
+    else:
+        output_len = outputlen
+    
     # peaks
     train_peaks_seqs=None
     train_peaks_cts=None
+    train_peaks_cts_ctrl=None
     train_peaks_coords=None
     # nonpeaks
     train_nonpeaks_seqs=None
     train_nonpeaks_cts=None
+    train_nonpeaks_cts_ctrl=None
     train_nonpeaks_coords=None
 
     if bed_regions is not None:
         if not set(['chr', 'start', 'summit']).issubset(bed_regions.columns):
             bed_regions = expand_3col_to_10col(bed_regions)
-        train_peaks_seqs, train_peaks_cts, train_peaks_coords = get_seq_cts_coords(bed_regions,
-                                                                                   genome,
-                                                                                   cts_bw,
-                                                                                   inputlen+2*max_jitter,
-                                                                                   outputlen+2*max_jitter,
-                                                                                   peaks_bool=1)
+        train_peaks_seqs, train_peaks_cts, train_peaks_cts_ctrl, train_peaks_coords = get_seq_cts_coords(
+            bed_regions,
+            genome,
+            cts_bw,
+            cts_ctrl_bw,
+            inputlen+2*max_jitter,
+            output_len+2*max_jitter,
+            peaks_bool=1
+        )
     
     if nonpeak_regions is not None:
         if not set(['chr', 'start', 'summit']).issubset(nonpeak_regions.columns):
             nonpeak_regions = expand_3col_to_10col(nonpeak_regions)
-        train_nonpeaks_seqs, train_nonpeaks_cts, train_nonpeaks_coords = get_seq_cts_coords(nonpeak_regions,
-                                                                                            genome,
-                                                                                            cts_bw,
-                                                                                            inputlen,
-                                                                                            outputlen,
-                                                                                            peaks_bool=0)
+        train_nonpeaks_seqs, train_nonpeaks_cts, train_nonpeaks_cts_ctrl, train_nonpeaks_coords = get_seq_cts_coords(
+            nonpeak_regions,
+            genome,
+            cts_bw,
+            cts_ctrl_bw,
+            inputlen,
+            output_len,
+            peaks_bool=0
+        )
 
     cts_bw.close()
+    if cts_ctrl_bw is not None:
+        cts_ctrl_bw.close()
     genome.close()
 
-    return (train_peaks_seqs, train_peaks_cts, train_peaks_coords,
-            train_nonpeaks_seqs, train_nonpeaks_cts, train_nonpeaks_coords)
+    if (train_peaks_seqs.sum(axis=-1) == 1).all():
+        print('One-hot encoding verified for peak sequences.')
+    else:
+        # TODO figure out why this happens -> see get_seq in data_utils.py
+        # I guess some of the corresponding sequences have letters other than ACGT?
+        print('Warning: Peak sequences are not one-hot encoded?!')
+
+    return (train_peaks_seqs, train_peaks_cts, train_peaks_cts_ctrl, train_peaks_coords,
+            train_nonpeaks_seqs, train_nonpeaks_cts, train_nonpeaks_cts_ctrl, train_nonpeaks_coords)
 
 # valeh: I skimmed through this
 def write_bigwig(
@@ -428,7 +463,7 @@ def take_per_row(A, indx, num_elem):
     # we can't do A[:, all_indx] for some reason but this syntax below wokrs as expected
     return A[np.arange(all_indx.shape[0])[:,None], all_indx]
 
-def random_crop(seqs, labels, seq_crop_width, label_crop_width, coords):
+def random_crop(seqs, labels, labels_ctrl, seq_crop_width, label_crop_width, coords):
     """
     Takes sequences and corresponding counts labels. They should have the same
     # of examples. The widths would correspond to inputlen and outputlen respectively,
@@ -440,12 +475,14 @@ def random_crop(seqs, labels, seq_crop_width, label_crop_width, coords):
     """
     assert(seqs.shape[1] >= seq_crop_width)
     assert(labels.shape[1] >= label_crop_width)
+    if labels_ctrl is not None:
+        assert(labels_ctrl.shape[1] >= label_crop_width)
 
     # here is a graphic illustrating this
     #
     # |<------ seq_width ------>|
     #   |<--- label_width --->|
-    # seq_width - alpha = label_width (alpha is "crop // 2")
+    # seq_width - alpha = label_width (alpha is "crop")
     #
     # after cropping both seq and label:
     # |<------ seq_crop_width ------>|
@@ -459,6 +496,8 @@ def random_crop(seqs, labels, seq_crop_width, label_crop_width, coords):
     # seq_width - seq_crop_width = label_width - label_crop_width
     #
     assert(seqs.shape[1] - seq_crop_width == labels.shape[1] - label_crop_width)
+    if labels_ctrl is not None:
+        assert(seqs.shape[1] - seq_crop_width == labels_ctrl.shape[1] - label_crop_width)
 
     # TODO: pretty sure max_start should be "(seqs.shape[1] - seq_crop_width) // 2"?
     max_start = seqs.shape[1] - seq_crop_width
@@ -466,7 +505,13 @@ def random_crop(seqs, labels, seq_crop_width, label_crop_width, coords):
     new_coords = coords.copy()
     new_coords[:,1] = new_coords[:,1].astype(int) - (seqs.shape[1]//2) + starts
 
-    return take_per_row(seqs, starts, seq_crop_width), take_per_row(labels, starts, label_crop_width), new_coords
+    return (
+        take_per_row(seqs, starts, seq_crop_width),
+        take_per_row(labels, starts, label_crop_width),
+        take_per_row(labels_ctrl, starts, label_crop_width) if labels_ctrl is not None else None,
+        new_coords,
+        starts
+    )
 
 def random_rev_comp(seqs, labels, coords, frac=0.5):
     """
@@ -505,11 +550,14 @@ def revcomp_shuffle_augment(seqs, labels, coords, add_revcomp, rc_frac=0.5, shuf
         mod_coords = mod_coords[perm]
 
     return mod_seqs, mod_labels, mod_coords
-
+    
 def crop_revcomp_data(
     peak_seqs, peak_cts, peak_coords, 
     nonpeak_seqs=None, nonpeak_cts=None, nonpeak_coords=None, 
-    inputlen=2114, outputlen=1000, add_revcomp=False, negative_sampling_ratio=0.1, shuffle=False):
+    per_bin_peak_cts_dict=None, per_bin_peak_cts_ctrl_dict=None,
+    per_bin_nonpeak_cts_dict=None, per_bin_nonpeak_cts_ctrl_dict=None,
+    inputlen=2114, outputlen=1000, output_bins: list = None,
+    add_revcomp=False, negative_sampling_ratio=0.1, shuffle=False):
     """Apply random cropping and reverse complement augmentation to the data.
         
         This method:
@@ -518,45 +566,80 @@ def crop_revcomp_data(
         3. Applies reverse complement augmentation if enabled
         4. Shuffles data if shuffle is True
     """
+    def crop_peak_data():
+        if output_bins is None:
+            cropped_peaks, cropped_cnts, cropped_cnts_ctrl, cropped_coords, _ = random_crop(
+                peak_seqs, peak_cts, None, inputlen, outputlen, peak_coords
+            )
+            return cropped_peaks, cropped_cnts, cropped_cnts_ctrl, cropped_coords
+        else:
+            cropped_cnts = {}
+            cropped_cnts_ctrl = {}
+            starts = None
+            for w in output_bins:
+                if starts is None:
+                    cropped_peaks, cropped_cnts[w], cropped_cnts_ctrl[w], cropped_coords, starts = random_crop(
+                        peak_seqs, per_bin_peak_cts_dict[w], per_bin_peak_cts_ctrl_dict[w], inputlen, w, peak_coords
+                    )
+                else:
+                    cropped_cnts[w] = take_per_row(per_bin_peak_cts_dict[w], starts, w)
+                    cropped_cnts_ctrl[w] = take_per_row(per_bin_peak_cts_ctrl_dict[w], starts, w)
+            return cropped_peaks, cropped_cnts, cropped_cnts_ctrl, cropped_coords
+
     if (peak_seqs is not None) and (nonpeak_seqs is not None):
         # Crop peak data
-        cropped_peaks, cropped_cnts, cropped_coords = random_crop(
-            peak_seqs, peak_cts, inputlen, outputlen, peak_coords
-        )
+        cropped_peaks, cropped_cnts, cropped_cnts_ctrl, cropped_coords = crop_peak_data()
         
         # Sample negative examples
         # valeh: why is this needed btw? dont we do this during pre-processing?
         if negative_sampling_ratio > 0:
+            # TODO handle for histobpnet
+            if output_bins is not None:
+                raise NotImplementedError("Subsampling non-peak data with output bins is not implemented yet.")
             sampled_nonpeak_seqs, sampled_nonpeak_cts, sampled_nonpeak_coords = subsample_nonpeak_data(
                 nonpeak_seqs, nonpeak_cts, nonpeak_coords,
                 len(peak_seqs), negative_sampling_ratio
             )
             seqs = np.vstack([cropped_peaks, sampled_nonpeak_seqs])
-            cts = np.vstack([cropped_cnts, sampled_nonpeak_cts])
             coords = np.vstack([cropped_coords, sampled_nonpeak_coords])
+            cts = np.vstack([cropped_cnts, sampled_nonpeak_cts])
         else:
             seqs = np.vstack([cropped_peaks, nonpeak_seqs])
-            cts = np.vstack([cropped_cnts, nonpeak_cts])
             coords = np.vstack([cropped_coords, nonpeak_coords])
+
+            if output_bins is None:
+                cts = np.vstack([cropped_cnts, nonpeak_cts])
+                cts_ctrl = None
+            else:
+                # concatenate dicts
+                cts, cts_ctrl = {}, {}
+                for w in output_bins:
+                    cts[w] = np.vstack([cropped_cnts[w], per_bin_nonpeak_cts_dict[w]])
+                    cts_ctrl[w] = np.vstack([cropped_cnts_ctrl[w], per_bin_nonpeak_cts_ctrl_dict[w]])
     elif peak_seqs is not None:
         # Only peak data
-        cropped_peaks, cropped_cnts, cropped_coords = random_crop(
-            peak_seqs, peak_cts, inputlen, outputlen, peak_coords
-        )
+        cropped_peaks, cropped_cnts, cropped_cnts_ctrl, cropped_coords = crop_peak_data()
         seqs = cropped_peaks
-        cts = cropped_cnts
         coords = cropped_coords
+        cts = cropped_cnts
+        cts_ctrl = cropped_cnts_ctrl
     elif nonpeak_seqs is not None:
         # Only non-peak data
         seqs = nonpeak_seqs
-        cts = nonpeak_cts
         coords = nonpeak_coords
+        cts = per_bin_nonpeak_cts_dict
+        cts_ctrl = per_bin_nonpeak_cts_ctrl_dict
     else:
         raise ValueError("Both peak and non-peak arrays are empty")
 
     # Apply revcomp and shuffle augmentations
-    seqs, cts, coords = revcomp_shuffle_augment(
-        seqs, cts, coords,
-        add_revcomp, shuffle=shuffle
-    )
+    if output_bins is None:
+        seqs, cts, coords = revcomp_shuffle_augment(
+            seqs, cts, coords,
+            add_revcomp, shuffle=shuffle
+        )
+    else:
+        # TODO handle per-bin cts and cts_ctrl
+        return seqs, cts, cts_ctrl, coords
+    
     return seqs, cts, coords

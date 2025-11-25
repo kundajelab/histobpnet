@@ -20,6 +20,7 @@ class DataConfig:
         peaks: str = None,
         negatives: str = None,
         bigwig: str = None,
+        bigwig_ctrl: str = None,
         negative_sampling_ratio: float = 0.1,
         saved_data: str = None,
         fasta: str = None,
@@ -28,6 +29,7 @@ class DataConfig:
         genome: str = 'hg38',
         in_window: int = 2114,
         out_window: int = 1000,
+        output_bins: str = "",
         shift: int = 500,
         rc: float = 0.5,
         outlier_threshold: float = 0.999,
@@ -50,6 +52,7 @@ class DataConfig:
         self.peaks = peaks if peaks is not None else f'{data_dir}/peaks.bed'
         self.negatives = negatives if negatives is not None else f'{data_dir}/negatives.bed'
         self.bigwig = bigwig if bigwig is not None else f'{data_dir}/unstranded.bw'
+        self.bigwig_ctrl = bigwig_ctrl
         
         self.fasta = fasta if fasta is not None else _genome.fasta
         self.chrom_sizes = chrom_sizes if chrom_sizes is not None else _genome.chrom_sizes
@@ -65,6 +68,7 @@ class DataConfig:
         self.saved_data = saved_data
         self.in_window = in_window
         self.out_window = out_window
+        self.output_bins = output_bins
         self.shift = shift
         self.rc = rc
         self.outlier_threshold = outlier_threshold
@@ -98,12 +102,18 @@ class DataConfig:
         required_files = {
             'FASTA': self.fasta,
             'BigWig': self.bigwig,
+            'BigWigCtrl': self.bigwig_ctrl,
             'Peaks': self.peaks
         }
         
         for name, path in required_files.items():
-            if not os.path.exists(path):
-                raise FileNotFoundError(f"{name} file not found: {path}")
+            # TODO_later should prob subclass this class
+            if name != 'BigWigCtrl':
+                if not os.path.exists(path):
+                    raise FileNotFoundError(f"{name} file not found: {path}")
+            else:
+                if path is not None and not os.path.exists(path):
+                    raise FileNotFoundError(f"{name} file not found: {path}")
     
     def _validate_windows(self):
         """Validate window size parameters."""
@@ -113,6 +123,12 @@ class DataConfig:
             raise ValueError("Output window size must be positive")
         if self.in_window < self.out_window:
             raise ValueError("Input window must be larger than output window")
+        if self.output_bins != "":
+            bins = [int(b.strip()) for b in self.output_bins.split(',')]
+            # if sum(bins) != self.out_window:
+                # raise ValueError("Sum of output bins must equal out_window")
+            if any(b <= 0 for b in bins):
+                raise ValueError("All output bins must be positive integers")
     
     def _validate_chromosomes(self):
         """Validate chromosome configuration."""
@@ -127,5 +143,5 @@ class DataConfig:
     
     def _validate_data_type(self):
         """Validate data type parameter."""
-        if self.data_type not in ['profile', 'longrange']:
-            raise ValueError("Data type must be either 'profile' or 'longrange'")
+        if self.data_type not in ['profile', 'longrange', 'histone_profile']:
+            raise ValueError("Data type must be either 'profile', 'longrange', or 'histone_profile'")
