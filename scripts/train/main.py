@@ -38,7 +38,7 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     # what s bias_scaled as opposed to regular bias model? -> see https://github.com/kundajelab/chrombpnet/wiki/Output-format
     parser.add_argument('--bias_scaled', type=str, required=True,
                        help='Path to bias scaled model')
-    # this is only used for training (and I think fine-tuning), TODO move it to their respective subparsers
+    # this is only used for training (and I think fine-tuning), TODO_later move it to their respective subparsers
     parser.add_argument('--chrombpnet_wo_bias', type=str, default=None,
                        help='ChromBPNet model without bias')
     parser.add_argument('--verbose', action='store_true',
@@ -156,7 +156,7 @@ def train(args, output_dir: str, logger):
 
     trainer = L.Trainer(
         max_epochs=args.max_epochs,
-        # valeh: why not 0? TODO
+        # valeh: why not 0? TODO_NOW
         reload_dataloaders_every_n_epochs=1,
         check_val_every_n_epoch=1, # 5
         accelerator='gpu',
@@ -184,7 +184,10 @@ def train(args, output_dir: str, logger):
         # in a plain nn.Module
         ckpt_dir = os.path.join(output_dir, "checkpoints")
         os.makedirs(ckpt_dir, exist_ok=False)
-        torch.save(model_wrapper.model.model.state_dict(), os.path.join(ckpt_dir, f'{args.model_type}.pt'))
+        # TODO_later this currently only works for the histobpnet model where I've called the BPNet model bpnet
+        # for other models I guess it might make sense to store a list or dict of sub-Modules and then save all
+        # those here?
+        torch.save(model_wrapper.model.bpnet.state_dict(), os.path.join(ckpt_dir, f'{args.model_type}.pt'))
 
 def load_model(args, output_dir: str):
     if args.checkpoint is None:

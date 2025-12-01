@@ -209,14 +209,22 @@ class ModelWrapper(LightningModule):
         Args:
             mode: Mode of operation ('train', 'val', or 'test')
         """
-        # Concatenate predictions and targets
-        all_preds = torch.cat(self.metrics[mode]['preds']).reshape(-1)
-        all_targets = torch.cat(self.metrics[mode]['targets']).reshape(-1)
+        # Concatenate predictions and targets across batches
+        all_preds = torch.cat(self.metrics[mode]['preds'])
+        all_targets = torch.cat(self.metrics[mode]['targets'])
         
-        # Calculate and log correlation
-        pr = pearson_corr(all_preds, all_targets, eps=0)
-        self.log(f"{mode}_count_pearson", pr, prog_bar=True, logger=True, sync_dist=True)
-        
+        if self.model_type != "histone":
+            # Calculate and log correlation
+            pr = pearson_corr(all_preds.reshape(-1), all_targets.reshape(-1), eps=0)
+            self.log(f"{mode}_count_pearson", pr, prog_bar=True, logger=True, sync_dist=True)
+        else:
+            # Calculate and log correlation per bin
+            assert all_preds.shape[1] == len(self.model.output_bins), "Mismatch between number of output bins and predictions"
+            for i in range(len(self.model.output_bins)):
+                pr = pearson_corr(all_preds[:, i].reshape(-1), all_targets[:, i].reshape(-1), eps=0)
+                bin_size = str(self.model.output_bins[i])
+                self.log(f"{mode}_count_pearson_{bin_size}bp", pr, prog_bar=True, logger=True, sync_dist=True)
+
         # Reset metrics storage
         self.metrics[mode]['preds'] = []
         self.metrics[mode]['targets'] = []
@@ -367,24 +375,25 @@ class HistoBPNetWrapper(BPNetWrapper):
         true_bin_profile = batch['per_bin_profile'] 
         true_bin_profile_ctl = batch['per_bin_profile_ctrl']
 
-        true_binned_logsum, true_binned_lfc = self._make_binned_counts(true_bin_profile, true_bin_profile_ctl, eps=1e-6)
+        true_binned_logsum, true_binned_logsum_ctl = self._make_binned_counts(true_bin_profile, true_bin_profile_ctl, eps=1e-6)
 
         assert x.shape[1] == 4, "Input sequence must be one-hot encoded with 4 channels (A, C, G, T)"
         assert x.shape[0] == true_binned_logsum.shape[0], "Batch size of input sequence and true_binned_logsum must match"
-        assert x.shape[0] == true_binned_lfc.shape[0], "Batch size of input sequence and true_binned_lfc must match"
+        assert x.shape[0] == true_binned_logsum_ctl.shape[0], "Batch size of input sequence and true_binned_logsum_ctl must match"
 
-        y_count = self(x, observed_ctrl=true_binned_logsum).squeeze(-1) # batch_size x num_bins
+        y_count = self(x, observed_ctrl=true_binned_logsum_ctl) # batch_size x num_bins
 
         if mode == 'predict':
             return {
                 'pred_count': to_numpy(y_count),
-                'true_count': to_numpy(true_binned_lfc),
+                'true_count': to_numpy(true_binned_logsum),
             }
 
         self.metrics[mode]['preds'].append(y_count)
-        self.metrics[mode]['targets'].append(true_binned_lfc)
+        self.metrics[mode]['targets'].append(true_binned_logsum)
 
-        mse_elements = (y_count - true_binned_lfc) ** 2     # shape: (batch_size, n_bins)
+        # TODO_NOW does mse in log space make sense?
+        mse_elements = (y_count - true_binned_logsum) ** 2     # shape: (batch_size, n_bins)
         count_loss = mse_elements.mean()
         loss = count_loss
 
@@ -406,24 +415,26 @@ class HistoBPNetWrapper(BPNetWrapper):
         true_binned_lfc:    (batch_size, num_bins)
         """
         # ensure a consistent bin order
-        bin_keys = sorted(true_bin_profile.keys())
+        assert list(true_bin_profile.keys()) == self.model.output_bins
+        assert list(true_bin_profile_ctl.keys()) == self.model.output_bins
 
         # sum over bin_width dimension for each bin -> list of (batch_size,)
-        true_sums = [true_bin_profile[k].sum(dim=1) for k in bin_keys]
-        ctl_sums  = [true_bin_profile_ctl[k].sum(dim=1) for k in bin_keys]
+        true_sums = [true_bin_profile[k].sum(dim=1) for k in self.model.output_bins]
+        ctl_sums  = [true_bin_profile_ctl[k].sum(dim=1) for k in self.model.output_bins]
 
         # stack into (batch_size, num_bins)
         true_sums_mat = torch.stack(true_sums, dim=1)   # (batch_size, num_bins)
         ctl_sums_mat  = torch.stack(ctl_sums, dim=1)    # (batch_size, num_bins)
 
         # log of summed counts per bin
-        # TODO log or log1p?... here and below
+        # TODO_NOW log or log1p?... here and below. bpnet does log1p (see def count_head and def _step)
         true_binned_logsum = torch.log(true_sums_mat + eps)
 
         # log fold change per bin: log(sum_t / sum_ctl)
-        true_binned_lfc = torch.log((true_sums_mat + eps) / (ctl_sums_mat + eps))
+        # true_binned_lfc = torch.log((true_sums_mat + eps) / (ctl_sums_mat + eps))
+        true_binned_logsum_ctl = torch.log(ctl_sums_mat + eps)
 
-        return true_binned_logsum, true_binned_lfc
+        return true_binned_logsum, true_binned_logsum_ctl
 
 def create_model_wrapper(
     args,
@@ -443,10 +454,10 @@ def create_model_wrapper(
     elif model_type == 'histobpnet':
         model_wrapper = HistoBPNetWrapper(args)
         if args.chrombpnet_wo_bias:
-            model_wrapper.model.model = model_wrapper.init_chrombpnet_wo_bias(
+            model_wrapper.model.bpnet = model_wrapper.init_chrombpnet_wo_bias(
                 args.chrombpnet_wo_bias,
                 freeze=False,
-                instance=model_wrapper.model.model
+                instance=model_wrapper.model.bpnet
             )
         return model_wrapper
     else:

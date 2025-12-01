@@ -483,7 +483,7 @@ class HistoBPNetDataset(ChromBPNetDataset):
         return bin_mats
 
     def crop_revcomp_data(self):
-        # TODO make sure call to crop_revcomp_data in chrombpent and here is correct
+        # TODO_NOW make sure call to crop_revcomp_data in chrombpent and here is correct
         self.cur_seqs, self.cur_cts, self.cur_cts_ctrl, self.cur_coords = crop_revcomp_data(
             self.peak_seqs, None, self.peak_coords,
             self.nonpeak_seqs, None, self.nonpeak_coords,

@@ -159,8 +159,9 @@ class BPNet(torch.nn.Module):
             pred_profile = None
         else:
             pred_profile = self.profile_head(x, x_ctl=x_ctl) # before log_softmax
-        pred_count = self.count_head(x, x_ctl=x_ctl, x_ctl_hist=x_ctl_hist) #.squeeze(-1) # (batch_size, 1)
-
+        # (batch_size, n_count_outputs) (ie (batch_size, 1) in the case of bpnet and chrombpnet)
+        pred_count = self.count_head(x, x_ctl=x_ctl, x_ctl_hist=x_ctl_hist)
+        
         return pred_profile, pred_count
 
     def get_embs_after_crop(self, x):

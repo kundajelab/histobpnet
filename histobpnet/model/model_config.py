@@ -54,7 +54,7 @@ class HistoBPNetConfig(BaseConfig):
         conv1_kernel_size: int = 21,
         profile_kernel_size: int = 0,
         n_outputs: int = 1,
-        # TODO fix bins
+        # TODO_NOW fix bins
         output_bins: str = "1000, 2000, 4000, 8000, 16000",
         profile_output_bias: bool = True, 
         count_output_bias: bool = True, 

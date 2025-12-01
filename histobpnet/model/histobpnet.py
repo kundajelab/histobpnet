@@ -12,7 +12,7 @@ class HistoBPNet(nn.Module):
     ):
         super().__init__()
 
-        self.model = BPNet(
+        self.bpnet = BPNet(
             n_filters = config.n_filters, 
             n_layers = config.n_layers, 
             out_dim = config.out_dim,
@@ -25,11 +25,9 @@ class HistoBPNet(nn.Module):
             n_count_outputs=config.n_count_outputs,
         )
 
-        self._log = _Log()
-        self._exp1 = _Exp()
-
         self.n_control_tracks = config.n_control_tracks
-
+        self.output_bins = config.output_bins
+        
         self.tf_style_reinit()
 
     def tf_style_reinit(self):
@@ -64,10 +62,7 @@ class HistoBPNet(nn.Module):
         observed_ctrl: torch.tensor, shape=(batch_size, n_control_tracks)
             The observed log of the sum of the (scaled) raw input control counts in each bin.
         """
-        binned_logits = self.model(x, x_ctl_hist=observed_ctrl)
+        binned_y_counts = self.bpnet(x, x_ctl_hist=observed_ctrl)
 
-        # TODO hmm does this make sense?
-        y_counts = self._log(self._exp1(binned_logits))
-        
-        # DO NOT SQUEEZE y_counts, as it is needed for running deep_lift_shap
-        return y_counts #.squeeze() 
+        # DO NOT SQUEEZE y_counts (if applicable), as it is needed for running deep_lift_shap
+        return binned_y_counts

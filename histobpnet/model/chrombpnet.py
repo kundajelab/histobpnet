@@ -16,7 +16,7 @@ class ChromBPNet(nn.Module):
     ):
         super().__init__()
 
-        # TODO call this acc instead of model
+        # TODO_later call this acc instead of model
         self.model = BPNet(
             n_filters = config.n_filters, 
             n_layers = config.n_layers, 

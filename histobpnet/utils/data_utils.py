@@ -499,7 +499,7 @@ def random_crop(seqs, labels, labels_ctrl, seq_crop_width, label_crop_width, coo
     if labels_ctrl is not None:
         assert(seqs.shape[1] - seq_crop_width == labels_ctrl.shape[1] - label_crop_width)
 
-    # TODO: pretty sure max_start should be "(seqs.shape[1] - seq_crop_width) // 2"?
+    # TODO_NOW: pretty sure max_start should be "(seqs.shape[1] - seq_crop_width) // 2"?
     max_start = seqs.shape[1] - seq_crop_width
     starts = np.random.choice(range(max_start+1), size=seqs.shape[0], replace=True)
     new_coords = coords.copy()
