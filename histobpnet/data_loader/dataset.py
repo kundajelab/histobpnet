@@ -333,7 +333,6 @@ class ChromBPNetDataset(torch.utils.data.Dataset):
         # Store data
         self.peak_seqs, self.nonpeak_seqs = peak_seqs, nonpeak_seqs
         self.peak_cts, self.nonpeak_cts = peak_cts, nonpeak_cts
-        self.peak_cts_ctrl, self.nonpeak_cts_ctrl = None, None
         self.peak_coords, self.nonpeak_coords = peak_coords, nonpeak_coords
 
         # Store parameters
@@ -369,9 +368,14 @@ class ChromBPNetDataset(torch.utils.data.Dataset):
         4. Shuffles data if shuffle_at_epoch_start is True
         """
         self.cur_seqs, self.cur_cts, self.cur_coords = crop_revcomp_data(
-            self.peak_seqs, self.peak_cts, self.peak_cts_ctrl, self.peak_coords,
-            self.nonpeak_seqs, self.nonpeak_cts, self.nonpeak_cts_ctrl, self.nonpeak_coords,
-            self.inputlen, self.outputlen, self.add_revcomp, self.negative_sampling_ratio, self.shuffle_at_epoch_start)
+            self.peak_seqs, self.peak_cts, self.peak_coords,
+            self.nonpeak_seqs, self.nonpeak_cts, self.nonpeak_coords,
+            inputlen=self.inputlen,
+            outputlen=self.outputlen,
+            add_revcomp=self.add_revcomp,
+            negative_sampling_ratio=self.negative_sampling_ratio,
+            shuffle=self.shuffle_at_epoch_start
+        )
 
     def _get_adj(self):
         """Get adjacency matrix for the data."""
@@ -483,7 +487,86 @@ class HistoBPNetDataset(ChromBPNetDataset):
         return bin_mats
 
     def crop_revcomp_data(self):
-        # TODO_NOW make sure call to crop_revcomp_data in chrombpent and here is correct
+        self.cur_seqs, self.cur_cts, self.cur_cts_ctrl, self.cur_coords = crop_revcomp_data(
+            self.peak_seqs, None, self.peak_coords,
+            self.nonpeak_seqs, None, self.nonpeak_coords,
+            self.per_bin_peak_cts_dict, self.per_bin_peak_cts_ctrl_dict,
+            self.per_bin_nonpeak_cts_dict, self.per_bin_nonpeak_cts_ctrl_dict,
+            self.inputlen, self.outputlen, self.output_bins,
+            self.add_revcomp, self.negative_sampling_ratio, self.shuffle_at_epoch_start)
+        
+    def __getitem__(self, idx):
+        return {
+            'onehot_seq': self.cur_seqs[idx].astype(np.float32).transpose(),
+            'per_bin_profile': {k:v[idx].astype(np.float32) for k,v in self.cur_cts.items()},
+            'per_bin_profile_ctrl': {k:v[idx].astype(np.float32) for k,v in self.cur_cts_ctrl.items()},
+        }
+
+class HistoBPNetDatasetV2(ChromBPNetDataset):
+   # TODO_later refactor this thing please!
+    def __init__(
+        self, 
+        peak_regions, 
+        nonpeak_regions, 
+        genome_fasta, 
+        inputlen=2114, 
+        outputlen=0, 
+        max_jitter=0, 
+        negative_sampling_ratio=-1, 
+        cts_bw_file=None, 
+        cts_ctrl_bw_file=None,
+        output_bins="",
+        add_revcomp=False, 
+        return_coords=False,    
+        shuffle_at_epoch_start=False, 
+        debug=False,
+        **kwargs
+    ):
+        if debug:
+            peak_regions = debug_subsample(peak_regions)
+            nonpeak_regions = debug_subsample(nonpeak_regions)
+
+        # Load data
+        self.peak_seqs, peak_cts, peak_cts_ctrl, self.peak_coords, \
+        self.nonpeak_seqs, self.nonpeak_cts, self.nonpeak_cts_ctrl, self.nonpeak_coords = load_data(
+            peak_regions, nonpeak_regions, genome_fasta, cts_bw_file, cts_ctrl_bw_file,
+            inputlen, outputlen, output_bins, max_jitter
+        )
+
+        # peak_cts is an array of shape (num_peaks, max(output_bins))
+        # transform it to an array where each row is a list where each
+        # element is the array of counts in that bin
+        # the mid point of each bin should be aligned to the summit
+        # where the summit is at max_output_bin // 2
+        output_bins = [int(x) for x in output_bins.split(",")]
+        self.per_bin_peak_cts_dict = self._split_counts_into_bins(peak_cts, output_bins, max_jitter=max_jitter)
+        self.per_bin_peak_cts_ctrl_dict = self._split_counts_into_bins(peak_cts_ctrl, output_bins, max_jitter=max_jitter)
+        if self.nonpeak_cts is not None:
+            self.per_bin_nonpeak_cts_dict = self._split_counts_into_bins(self.nonpeak_cts, output_bins, max_jitter=0)
+            self.per_bin_nonpeak_cts_ctrl_dict = self._split_counts_into_bins(self.nonpeak_cts_ctrl, output_bins, max_jitter=0)
+
+        # Store parameters
+        self.negative_sampling_ratio = negative_sampling_ratio
+        self.inputlen = inputlen
+        self.outputlen = outputlen
+        self.output_bins = output_bins
+        self.add_revcomp = add_revcomp
+        self.return_coords = return_coords
+        self.shuffle_at_epoch_start = shuffle_at_epoch_start
+        self.max_jitter = max_jitter
+        self.genome_fasta = genome_fasta
+        self.cts_bw_file = cts_bw_file
+        self.cts_ctrl_bw_file = cts_ctrl_bw_file
+
+        if nonpeak_regions is not None:
+            self.regions = pd.concat([peak_regions, nonpeak_regions], ignore_index=True)
+        else:
+            self.regions = peak_regions
+
+        # Initialize data
+        self.crop_revcomp_data()
+
+    def crop_revcomp_data(self):
         self.cur_seqs, self.cur_cts, self.cur_cts_ctrl, self.cur_coords = crop_revcomp_data(
             self.peak_seqs, None, self.peak_coords,
             self.nonpeak_seqs, None, self.nonpeak_coords,
