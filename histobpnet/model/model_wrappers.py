@@ -10,9 +10,10 @@ import os
 
 from histobpnet.model.bpnet import BPNet
 from histobpnet.model.chrombpnet import ChromBPNet
-from histobpnet.model.histobpnet import HistoBPNet
-from histobpnet.model.model_config import ChromBPNetConfig, HistoBPNetConfig
-from histobpnet.utils.general_utils import to_numpy, multinomial_nll, pearson_corr
+from histobpnet.model.histobpnet_v1 import HistoBPNetV1
+from histobpnet.model.histobpnet_v2 import HistoBPNetV2
+from histobpnet.model.model_config import ChromBPNetConfig, HistoBPNetConfigV1, HistoBPNetConfigV2
+from histobpnet.utils.general_utils import to_numpy, multinomial_nll, pearson_corr, is_histone
 
 # valeh: ?? TODO
 def adjust_bias_model_logcounts(bias_model, dataloader, verbose=False, device=1):
@@ -213,7 +214,7 @@ class ModelWrapper(LightningModule):
         all_preds = torch.cat(self.metrics[mode]['preds'])
         all_targets = torch.cat(self.metrics[mode]['targets'])
         
-        if self.model_type != "histone":
+        if self.model_type != "histobpnet_v1":
             # Calculate and log correlation
             pr = pearson_corr(all_preds.reshape(-1), all_targets.reshape(-1), eps=0)
             self.log(f"{mode}_count_pearson", pr, prog_bar=True, logger=True, sync_dist=True)
@@ -357,15 +358,15 @@ class ChromBPNetWrapper(BPNetWrapper):
         config = ChromBPNetConfig.from_argparse_args(args)
         self.model = ChromBPNet(config)
 
-class HistoBPNetWrapper(BPNetWrapper):
+class HistoBPNetWrapperV1(BPNetWrapper):
     def __init__(
         self,
         args,
     ):
         super().__init__(args)
 
-        config = HistoBPNetConfig.from_argparse_args(args)
-        self.model = HistoBPNet(config)
+        config = HistoBPNetConfigV1.from_argparse_args(args)
+        self.model = HistoBPNetV1(config)
 
     def _step(self, batch, batch_idx, mode: str = 'train'):
         assert mode in ['train', 'val', 'test', 'predict'], "Invalid mode. Must be one of ['train', 'val', 'test', 'predict']"
@@ -392,7 +393,7 @@ class HistoBPNetWrapper(BPNetWrapper):
         self.metrics[mode]['preds'].append(y_count)
         self.metrics[mode]['targets'].append(true_binned_logsum)
 
-        # TODO_NOW does mse in log space make sense?
+        # TODO_NOW does mse in log space make sense? that's what bpnet does though (see def _step)
         mse_elements = (y_count - true_binned_logsum) ** 2     # shape: (batch_size, n_bins)
         count_loss = mse_elements.mean()
         loss = count_loss
@@ -436,6 +437,54 @@ class HistoBPNetWrapper(BPNetWrapper):
 
         return true_binned_logsum, true_binned_logsum_ctl
 
+class HistoBPNetWrapperV2(BPNetWrapper):
+    def __init__(
+        self,
+        args,
+    ):
+        super().__init__(args)
+
+        config = HistoBPNetConfigV2.from_argparse_args(args)
+        self.model = HistoBPNetV2(config)
+
+    def _step(self, batch, batch_idx, mode: str = 'train'):
+        assert mode in ['train', 'val', 'test', 'predict'], "Invalid mode. Must be one of ['train', 'val', 'test', 'predict']"
+
+        x = batch['onehot_seq'] # batch_size x 4 x seq_length
+        true_profile = batch['profile'] 
+        true_profile_ctl = batch['profile_ctrl']
+
+        # TODO log or log1p?.... bpnet does log1p (see def count_head and def _step)
+        true_logsum, true_logsum_ctl = true_profile.sum(dim=-1).log1p(), true_profile_ctl.sum(dim=-1).log1p()
+
+        assert x.shape[1] == 4, "Input sequence must be one-hot encoded with 4 channels (A, C, G, T)"
+        assert x.shape[0] == true_logsum.shape[0], "Batch size of input sequence and true_logsum must match"
+        assert x.shape[0] == true_logsum_ctl.shape[0], "Batch size of input sequence and true_logsum_ctl must match"
+        
+        y_count = self(x, observed_ctrl=true_logsum_ctl) # batch_size x 1
+
+        if mode == 'predict':
+            return {
+                'pred_count': to_numpy(y_count),
+                'true_count': to_numpy(true_logsum),
+            }
+
+        self.metrics[mode]['preds'].append(y_count)
+        self.metrics[mode]['targets'].append(true_logsum)
+
+        # TODO does mse in log space make sense? that's what bpnet does though (see def _step)
+        mse_elements = (y_count - true_logsum) ** 2     # shape: (batch_size, 1)
+        count_loss = mse_elements.mean()
+        loss = count_loss
+
+        dict_show = {
+            f'{mode}_loss': loss, 
+            f'{mode}_count_loss': count_loss,
+        }
+        self.log_dict(dict_show, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+
+        return loss
+    
 def create_model_wrapper(
     args,
 ) -> ModelWrapper:
@@ -451,8 +500,17 @@ def create_model_wrapper(
         if args.chrombpnet_wo_bias:
             model_wrapper.model.model = model_wrapper.init_chrombpnet_wo_bias(args.chrombpnet_wo_bias, freeze=False)
         return model_wrapper
-    elif model_type == 'histobpnet':
-        model_wrapper = HistoBPNetWrapper(args)
+    elif model_type == 'histobpnet_v1':
+        model_wrapper = HistoBPNetWrapperV1(args)
+        if args.chrombpnet_wo_bias:
+            model_wrapper.model.bpnet = model_wrapper.init_chrombpnet_wo_bias(
+                args.chrombpnet_wo_bias,
+                freeze=False,
+                instance=model_wrapper.model.bpnet
+            )
+        return model_wrapper
+    elif model_type == 'histobpnet_v2':
+        model_wrapper = HistoBPNetWrapperV2(args)
         if args.chrombpnet_wo_bias:
             model_wrapper.model.bpnet = model_wrapper.init_chrombpnet_wo_bias(
                 args.chrombpnet_wo_bias,
@@ -494,7 +552,7 @@ def load_pretrained_model(args):
                 print(f"No bias model found")
         else:
             model_wrapper = ChromBPNetWrapper(args)
-    elif model_type == 'histobpnet':
+    elif is_histone(model_type):
         raise NotImplementedError("Loading pretrained HistoBPNet models not implemented yet")
     else:
         raise NotImplementedError(f"Loading pretrained models not implemented for model type {model_type}")

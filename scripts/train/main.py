@@ -9,10 +9,11 @@ import time
 from toolbox.utils import get_instance_id, set_random_seed
 from toolbox.logger import SimpleLogger
 from histobpnet.data_loader.data_config import DataConfig
-from histobpnet.model.model_config import ChromBPNetConfig, HistoBPNetConfig
+from histobpnet.model.model_config import ChromBPNetConfig, HistoBPNetConfigV1, HistoBPNetConfigV2
 from histobpnet.model.model_wrappers import create_model_wrapper, load_pretrained_model, adjust_bias_model_logcounts
 from histobpnet.data_loader.dataset import DataModule
 from histobpnet.eval.metrics import compare_with_observed, save_predictions, load_output_to_regions
+from histobpnet.utils.general_utils import is_histone
 
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     """Add arguments shared across train, predict, and interpret commands.
@@ -50,7 +51,8 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     
     # Add model-specific arguments
     ChromBPNetConfig.add_argparse_args(parser)
-    HistoBPNetConfig.add_argparse_args(parser)
+    HistoBPNetConfigV1.add_argparse_args(parser)
+    HistoBPNetConfigV2.add_argparse_args(parser)
 
     # Add data configuration arguments
     DataConfig.add_argparse_args(parser)
@@ -133,7 +135,7 @@ def setup(instance_id: str):
     return args, output_dir, logger
 
 def train(args, output_dir: str, logger):
-    assert args.model_type == 'histobpnet', "Train currently only supported for histobpnet"
+    assert is_histone(args.model_type), "Train currently only supported for histobpnet"
 
     logger.add_to_log(f"Training with model type: {args.model_type}")
     logger.add_to_log(f'precision: {args.precision}')
@@ -156,12 +158,17 @@ def train(args, output_dir: str, logger):
 
     trainer = L.Trainer(
         max_epochs=args.max_epochs,
-        # valeh: why not 0? TODO_NOW
+        # valeh: why not 0? TODO_later ask Lei
+        # what this does: it reloads the data loaders every n epochs (here every epoch)
+        # useful if data augmentation or sampling changes every epoch
         reload_dataloaders_every_n_epochs=1,
         check_val_every_n_epoch=1, # 5
         accelerator='gpu',
         devices=args.gpu,
+        # run validation only at the end of each epoch
         val_check_interval=None,
+        # https://chatgpt.com/s/t_6930903a25608191b8ebbcb3242ae142
+        # TODO_later ask Lei why he set it to True
         strategy=DDPStrategy(find_unused_parameters=True),
         # So if early stopping kicks in after (say) epoch 17, then:
         # best_model.ckpt will be from the epoch with lowest val_loss up to epoch 17

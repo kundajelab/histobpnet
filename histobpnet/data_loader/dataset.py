@@ -22,6 +22,7 @@ from histobpnet.utils.data_utils import (
     crop_revcomp_data,
     debug_subsample,
 )
+from histobpnet.utils.general_utils import is_histone
 
 class DataModule(L.LightningDataModule):
     """DataModule for loading and processing genomic data for training and evaluation.
@@ -58,8 +59,10 @@ class DataModule(L.LightningDataModule):
         # Set dataset class based on data type
         if self.config.data_type == 'profile':
             self.dataset_class = ChromBPNetDataset
-        elif self.config.data_type == 'histone_profile':
-            self.dataset_class = HistoBPNetDataset
+        elif self.config.data_type == 'histone_v1':
+            self.dataset_class = HistoBPNetDatasetV1
+        elif self.config.data_type == 'histone_v2':
+            self.dataset_class = HistoBPNetDatasetV2
         else:
             raise NotImplementedError(f'Unsupported data type: {self.config.data_type}')
         
@@ -141,6 +144,7 @@ class DataModule(L.LightningDataModule):
                 cts_bw_file=config.bigwig,
                 cts_ctrl_bw_file=config.bigwig_ctrl,
                 output_bins=config.output_bins,
+                atac_hgp_map=config.atac_hgp_map,
                 add_revcomp=True,
                 return_coords=False,
                 shuffle_at_epoch_start=False,
@@ -156,6 +160,7 @@ class DataModule(L.LightningDataModule):
                 cts_bw_file=config.bigwig,
                 cts_ctrl_bw_file=config.bigwig_ctrl,
                 output_bins=config.output_bins,
+                atac_hgp_map=config.atac_hgp_map,
                 add_revcomp=False,
                 return_coords=False,
                 shuffle_at_epoch_start=False, 
@@ -173,6 +178,7 @@ class DataModule(L.LightningDataModule):
                 cts_bw_file=config.bigwig,
                 cts_ctrl_bw_file=config.bigwig_ctrl,
                 output_bins=config.output_bins,
+                atac_hgp_map=config.atac_hgp_map,
                 add_revcomp=False,
                 return_coords=False,
                 shuffle_at_epoch_start=False, 
@@ -182,6 +188,8 @@ class DataModule(L.LightningDataModule):
 
     @cached_property
     def median_count(self):
+        if is_histone(self.config.data_type):
+            raise NotImplementedError("median_count is not implemented for histone models")
         import pyBigWig
         # Calculate median count to get weight of count loss
         # valeh: I dont fully understand the logic here (ie why use the median to determine the weight)
@@ -217,8 +225,10 @@ class DataModule(L.LightningDataModule):
             num_workers=self.config.num_workers, 
         )
 
-    # TODO
+    # TODO_later review
     def negative_dataloader(self):
+        raise NotImplementedError("Raising this for now so I know when it's called + review it")
+    
         self.negative_dataset = self.dataset_class(
             peak_regions=self.negatives,
             nonpeak_regions=None,
@@ -273,6 +283,7 @@ class DataModule(L.LightningDataModule):
             cts_bw_file=self.config.bigwig,
             cts_ctrl_bw_file=self.config.bigwig_ctrl,
             output_bins=self.config.output_bins,
+            atac_hgp_map=self.config.atac_hgp_map,
             add_revcomp=False,
             return_coords=False,
             shuffle_at_epoch_start=False,
@@ -324,16 +335,11 @@ class ChromBPNetDataset(torch.utils.data.Dataset):
             nonpeak_regions = debug_subsample(nonpeak_regions)
 
         # Load data
-        peak_seqs, peak_cts, _, peak_coords, \
-        nonpeak_seqs, nonpeak_cts, _, nonpeak_coords = load_data(
+        self.peak_seqs, self.peak_cts, _, self.peak_coords, \
+        self.nonpeak_seqs, self.nonpeak_cts, _, self.nonpeak_coords = load_data(
             peak_regions, nonpeak_regions, genome_fasta, cts_bw_file,
             inputlen, outputlen, max_jitter
         )
-
-        # Store data
-        self.peak_seqs, self.nonpeak_seqs = peak_seqs, nonpeak_seqs
-        self.peak_cts, self.nonpeak_cts = peak_cts, nonpeak_cts
-        self.peak_coords, self.nonpeak_coords = peak_coords, nonpeak_coords
 
         # Store parameters
         self.negative_sampling_ratio = negative_sampling_ratio
@@ -367,9 +373,9 @@ class ChromBPNetDataset(torch.utils.data.Dataset):
         3. Applies reverse complement augmentation if enabled
         4. Shuffles data if shuffle_at_epoch_start is True
         """
-        self.cur_seqs, self.cur_cts, self.cur_coords = crop_revcomp_data(
-            self.peak_seqs, self.peak_cts, self.peak_coords,
-            self.nonpeak_seqs, self.nonpeak_cts, self.nonpeak_coords,
+        self.cur_seqs, self.cur_cts, _, self.cur_coords = crop_revcomp_data(
+            self.peak_seqs, self.peak_cts, None, self.peak_coords,
+            self.nonpeak_seqs, self.nonpeak_cts, None, self.nonpeak_coords,
             inputlen=self.inputlen,
             outputlen=self.outputlen,
             add_revcomp=self.add_revcomp,
@@ -397,8 +403,7 @@ class ChromBPNetDataset(torch.utils.data.Dataset):
             'profile': self.cur_cts[idx].astype(np.float32),
         }
 
-class HistoBPNetDataset(ChromBPNetDataset):
-   # TODO_later refactor this thing please!
+class HistoBPNetDatasetV1(ChromBPNetDataset):
     def __init__(
         self, 
         peak_regions, 
@@ -417,6 +422,10 @@ class HistoBPNetDataset(ChromBPNetDataset):
         debug=False,
         **kwargs
     ):
+        assert negative_sampling_ratio == -1
+        assert not add_revcomp
+        assert not shuffle_at_epoch_start
+    
         if debug:
             peak_regions = debug_subsample(peak_regions)
             nonpeak_regions = debug_subsample(nonpeak_regions)
@@ -424,8 +433,9 @@ class HistoBPNetDataset(ChromBPNetDataset):
         # Load data
         self.peak_seqs, peak_cts, peak_cts_ctrl, self.peak_coords, \
         self.nonpeak_seqs, self.nonpeak_cts, self.nonpeak_cts_ctrl, self.nonpeak_coords = load_data(
-            peak_regions, nonpeak_regions, genome_fasta, cts_bw_file, cts_ctrl_bw_file,
-            inputlen, outputlen, output_bins, max_jitter
+            peak_regions, nonpeak_regions, genome_fasta, cts_bw_file,
+            inputlen, outputlen, max_jitter,
+            cts_ctrl_bw_file=cts_ctrl_bw_file, output_bins=output_bins
         )
 
         # peak_cts is an array of shape (num_peaks, max(output_bins))
@@ -488,8 +498,8 @@ class HistoBPNetDataset(ChromBPNetDataset):
 
     def crop_revcomp_data(self):
         self.cur_seqs, self.cur_cts, self.cur_cts_ctrl, self.cur_coords = crop_revcomp_data(
-            self.peak_seqs, None, self.peak_coords,
-            self.nonpeak_seqs, None, self.nonpeak_coords,
+            self.peak_seqs, None, None, self.peak_coords,
+            self.nonpeak_seqs, None, None, self.nonpeak_coords,
             self.per_bin_peak_cts_dict, self.per_bin_peak_cts_ctrl_dict,
             self.per_bin_nonpeak_cts_dict, self.per_bin_nonpeak_cts_ctrl_dict,
             self.inputlen, self.outputlen, self.output_bins,
@@ -503,7 +513,6 @@ class HistoBPNetDataset(ChromBPNetDataset):
         }
 
 class HistoBPNetDatasetV2(ChromBPNetDataset):
-   # TODO_later refactor this thing please!
     def __init__(
         self, 
         peak_regions, 
@@ -516,34 +525,32 @@ class HistoBPNetDatasetV2(ChromBPNetDataset):
         cts_bw_file=None, 
         cts_ctrl_bw_file=None,
         output_bins="",
+        atac_hgp_map="",
         add_revcomp=False, 
         return_coords=False,    
         shuffle_at_epoch_start=False, 
         debug=False,
         **kwargs
     ):
+        assert max_jitter == 0
+        assert negative_sampling_ratio == -1
+        assert not add_revcomp
+        assert not shuffle_at_epoch_start
+
         if debug:
             peak_regions = debug_subsample(peak_regions)
             nonpeak_regions = debug_subsample(nonpeak_regions)
 
-        # Load data
-        self.peak_seqs, peak_cts, peak_cts_ctrl, self.peak_coords, \
-        self.nonpeak_seqs, self.nonpeak_cts, self.nonpeak_cts_ctrl, self.nonpeak_coords = load_data(
-            peak_regions, nonpeak_regions, genome_fasta, cts_bw_file, cts_ctrl_bw_file,
-            inputlen, outputlen, output_bins, max_jitter
-        )
+        assert atac_hgp_map != ""
+        atac_hgp_df = pd.read_csv(atac_hgp_map, sep="\t", header=0)
 
-        # peak_cts is an array of shape (num_peaks, max(output_bins))
-        # transform it to an array where each row is a list where each
-        # element is the array of counts in that bin
-        # the mid point of each bin should be aligned to the summit
-        # where the summit is at max_output_bin // 2
-        output_bins = [int(x) for x in output_bins.split(",")]
-        self.per_bin_peak_cts_dict = self._split_counts_into_bins(peak_cts, output_bins, max_jitter=max_jitter)
-        self.per_bin_peak_cts_ctrl_dict = self._split_counts_into_bins(peak_cts_ctrl, output_bins, max_jitter=max_jitter)
-        if self.nonpeak_cts is not None:
-            self.per_bin_nonpeak_cts_dict = self._split_counts_into_bins(self.nonpeak_cts, output_bins, max_jitter=0)
-            self.per_bin_nonpeak_cts_ctrl_dict = self._split_counts_into_bins(self.nonpeak_cts_ctrl, output_bins, max_jitter=0)
+        # Load data
+        self.peak_seqs, self.peak_cts, self.peak_cts_ctrl, self.peak_coords, \
+        self.nonpeak_seqs, self.nonpeak_cts, self.nonpeak_cts_ctrl, self.nonpeak_coords = load_data(
+            peak_regions, nonpeak_regions, genome_fasta, cts_bw_file,
+            inputlen, outputlen, max_jitter,
+            cts_ctrl_bw_file=cts_ctrl_bw_file, output_bins=output_bins, atac_hgp_df=atac_hgp_df
+        )
 
         # Store parameters
         self.negative_sampling_ratio = negative_sampling_ratio
@@ -568,16 +575,19 @@ class HistoBPNetDatasetV2(ChromBPNetDataset):
 
     def crop_revcomp_data(self):
         self.cur_seqs, self.cur_cts, self.cur_cts_ctrl, self.cur_coords = crop_revcomp_data(
-            self.peak_seqs, None, self.peak_coords,
-            self.nonpeak_seqs, None, self.nonpeak_coords,
-            self.per_bin_peak_cts_dict, self.per_bin_peak_cts_ctrl_dict,
-            self.per_bin_nonpeak_cts_dict, self.per_bin_nonpeak_cts_ctrl_dict,
-            self.inputlen, self.outputlen, self.output_bins,
-            self.add_revcomp, self.negative_sampling_ratio, self.shuffle_at_epoch_start)
-        
+            self.peak_seqs, self.peak_cts, self.peak_cts_ctrl, self.peak_coords,
+            self.nonpeak_seqs, self.nonpeak_cts, self.nonpeak_cts_ctrl, self.nonpeak_coords,
+            inputlen=self.inputlen,
+            outputlen=self.outputlen,
+            add_revcomp=self.add_revcomp,
+            negative_sampling_ratio=self.negative_sampling_ratio,
+            shuffle=self.shuffle_at_epoch_start,
+            do_crop=False
+        )
+
     def __getitem__(self, idx):
         return {
             'onehot_seq': self.cur_seqs[idx].astype(np.float32).transpose(),
-            'per_bin_profile': {k:v[idx].astype(np.float32) for k,v in self.cur_cts.items()},
-            'per_bin_profile_ctrl': {k:v[idx].astype(np.float32) for k,v in self.cur_cts_ctrl.items()},
+            'profile': self.cur_cts[idx].astype(np.float32),
+            'profile_ctrl': self.cur_cts_ctrl[idx].astype(np.float32),
         }

@@ -6,6 +6,9 @@ import warnings
 import subprocess
 from .data_utils import dna_to_one_hot
 
+def is_histone(type_t: str):
+    return type_t in ['histobpnet_v1', 'histobpnet_v2']
+
 def to_numpy(tensor: torch.Tensor) -> np.ndarray:
     return tensor.detach().cpu().numpy()
 

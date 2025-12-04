@@ -59,6 +59,7 @@ class BPNet(torch.nn.Module):
         name: str = None,
         verbose: bool = True,
         n_count_outputs: int = 1,
+        for_histone: str = None,
     ):
         super().__init__()
 
@@ -68,7 +69,8 @@ class BPNet(torch.nn.Module):
         self.n_outputs = n_outputs
         self.n_control_tracks = n_control_tracks
         self.verbose = verbose
-        
+        self.for_histone = for_histone
+
         self.name = name or "bpnet.{}.{}".format(n_filters, n_layers)
 
         # first convolution without dilation
@@ -106,8 +108,7 @@ class BPNet(torch.nn.Module):
 
         # count prediction
         n_count_control = 1 if n_control_tracks > 0 else 0
-        # hack for histobpnet, TODO_later make better
-        if n_count_outputs > 1:
+        if for_histone == 'histobpnet_v1':
             n_count_control = n_control_tracks
         # will be used to pool (average) over sequence length
         self.global_avg_pool = torch.nn.AdaptiveAvgPool1d(1)
@@ -202,7 +203,7 @@ class BPNet(torch.nn.Module):
             # output shape: (batch_size, 1)
             x_ctl = torch.sum(x_ctl, dim=(1, 2)).unsqueeze(-1)
             pred_count = torch.cat([pred_count, torch.log1p(x_ctl)], dim=-1)
-        # x_ctl_hist is of shape (batch_size, num_bins)
+        # x_ctl_hist is of shape (batch_size, num_bins) if histobpnet_v1 else (batch_size, 1)
         if x_ctl_hist is not None:
             pred_count = torch.cat([pred_count, x_ctl_hist], dim=-1)
         pred_count = self.linear(pred_count)
@@ -328,11 +329,10 @@ class BPNet(torch.nn.Module):
             model.fconv.weight = convert_w(w[fname][k])
             model.fconv.bias = convert_b(w[fname][b])
 
-        if model.fconv is not None:
-            # right now model.fconv is None means we're running for histobpnet
-            # TODO_later detect this in a cleaner way maybe
-            # also TODO do we want to / can we partially initialize the weights or something?
+        if model.for_histone != 'histobpnet_v1':
+            # TODO do we want to / can we partially initialize the weights or something?
             name = namer(prefix, "logcount_predictions")
             model.linear.weight = torch.nn.Parameter(torch.tensor(w[name][k][:].T))
             model.linear.bias = convert_b(w[name][b])
+
         return model

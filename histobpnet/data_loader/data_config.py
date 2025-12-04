@@ -30,6 +30,7 @@ class DataConfig:
         in_window: int = 2114,
         out_window: int = 1000,
         output_bins: str = "",
+        atac_hgp_map: str = "",
         shift: int = 500,
         rc: float = 0.5,
         outlier_threshold: float = 0.999,
@@ -69,6 +70,7 @@ class DataConfig:
         self.in_window = in_window
         self.out_window = out_window
         self.output_bins = output_bins
+        self.atac_hgp_map = atac_hgp_map
         self.shift = shift
         self.rc = rc
         self.outlier_threshold = outlier_threshold
@@ -103,12 +105,12 @@ class DataConfig:
             'FASTA': self.fasta,
             'BigWig': self.bigwig,
             'BigWigCtrl': self.bigwig_ctrl,
+            'ATAC_HGP_MAP': self.atac_hgp_map,
             'Peaks': self.peaks
         }
         
         for name, path in required_files.items():
-            # TODO_later should prob subclass this class
-            if name != 'BigWigCtrl':
+            if name not in ['BigWigCtrl', 'ATAC_HGP_MAP']:
                 if not os.path.exists(path):
                     raise FileNotFoundError(f"{name} file not found: {path}")
             else:
@@ -119,7 +121,7 @@ class DataConfig:
         """Validate window size parameters."""
         if self.in_window <= 0:
             raise ValueError("Input window size must be positive")
-        if self.out_window <= 0:
+        if self.out_window < 0:
             raise ValueError("Output window size must be positive")
         if self.in_window < self.out_window:
             raise ValueError("Input window must be larger than output window")

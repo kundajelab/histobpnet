@@ -124,7 +124,7 @@ def split_peak_and_nonpeak(data):
     peaks = data[data['is_peak']].copy()
     return peaks, non_peaks
 
-def get_cts(peaks_df, bw, width):
+def get_cts(peaks_df, bw, width, atac_hgp_df=None):
     """
     Fetches values from a bigwig bw, given a df with minimally
     chr, start and summit columns. Summit is relative to start.
@@ -136,10 +136,27 @@ def get_cts(peaks_df, bw, width):
     """
     vals = []
     for _, r in peaks_df.iterrows():
-        vals.append(np.nan_to_num(bw.values(r['chr'], 
-                                            r['start'] + r['summit'] - width//2,
-                                            r['start'] + r['summit'] + width//2)))
-        
+        if atac_hgp_df is None:
+            vals.append(np.nan_to_num(bw.values(r['chr'], 
+                                                r['start'] + r['summit'] - width//2,
+                                                r['start'] + r['summit'] + width//2)))
+        else:
+            idx = (atac_hgp_df["chrom"] == r['chr']) & (atac_hgp_df["start"] == r['start']) & (atac_hgp_df["end"] == r['end'])
+            if idx.sum() == 1:
+                hist_chrom = atac_hgp_df.loc[idx, 'hist_chrom'].values[0]
+                hist_start = atac_hgp_df.loc[idx, 'hist_start'].values[0]
+                hist_end = atac_hgp_df.loc[idx, 'hist_end'].values[0]
+                if hist_chrom == '.':
+                    vals.append(np.zeros(width))
+                else:
+                    a = np.nan_to_num(bw.values(hist_chrom, hist_start, hist_end))
+                    # pad to width w/ 0
+                    a_pad = np.pad(a, (0, width - len(a)), 'constant', constant_values=0)
+                    vals.append(a_pad)
+            elif idx.sum() == 0:
+                raise ValueError(f"No matching ATAC-Histone mapping found for region: {r['chr']}:{r['start']}-{r['end']}")
+            else:
+                raise ValueError(f"Multiple matching ATAC-Histone mappings found for region: {r['chr']}:{r['start']}-{r['end']}")
     return np.array(vals)
 
 def get_seq(peaks_df, genome, width):
@@ -164,10 +181,10 @@ def get_coords(peaks_df, peaks_bool):
 
     return np.array(vals)
 
-def get_seq_cts_coords(peaks_df, genome, bw, bw_ctrl, input_width, output_width, peaks_bool):
+def get_seq_cts_coords(peaks_df, genome, bw, bw_ctrl, input_width, output_width, peaks_bool, atac_hgp_df=None):
     seq = get_seq(peaks_df, genome, input_width)
-    cts = get_cts(peaks_df, bw, output_width)
-    cts_ctrl = get_cts(peaks_df, bw_ctrl, output_width) if bw_ctrl is not None else None
+    cts = get_cts(peaks_df, bw, output_width, atac_hgp_df=atac_hgp_df)
+    cts_ctrl = get_cts(peaks_df, bw_ctrl, output_width, atac_hgp_df=atac_hgp_df) if bw_ctrl is not None else None
     coords = get_coords(peaks_df, peaks_bool)
     return seq, cts, cts_ctrl, coords
 
@@ -176,11 +193,12 @@ def load_data(
     nonpeak_regions,
     genome_fasta,
     cts_bw_file,
-    cts_ctrl_bw_file,
     inputlen,
     outputlen,
-    output_bins,
-    max_jitter
+    max_jitter,
+    cts_ctrl_bw_file = None,
+    output_bins = None,
+    atac_hgp_df = None,
 ):
     """
     Load sequences and corresponding base resolution counts for training, 
@@ -198,8 +216,14 @@ def load_data(
     if output_bins != "":
         output_bins = [int(x) for x in output_bins.split(",")]
         output_len = max(output_bins)
+        output_len_neg = output_len
+    elif atac_hgp_df is not None:
+        output_len = (atac_hgp_df['hist_end'] - atac_hgp_df['hist_start']).max()
+        # we'll use this for nonpeak regions since we dont know what a "good" outputlen should be
+        output_len_neg = (atac_hgp_df['hist_end'] - atac_hgp_df['hist_start']).mean()
     else:
         output_len = outputlen
+        output_len_neg = output_len
     
     # peaks
     train_peaks_seqs=None
@@ -222,20 +246,22 @@ def load_data(
             cts_ctrl_bw,
             inputlen+2*max_jitter,
             output_len+2*max_jitter,
-            peaks_bool=1
+            peaks_bool=1,
+            atac_hgp_df=atac_hgp_df,
         )
     
     if nonpeak_regions is not None:
         if not set(['chr', 'start', 'summit']).issubset(nonpeak_regions.columns):
             nonpeak_regions = expand_3col_to_10col(nonpeak_regions)
+        # no reason to pass atac_hgp_df here since nonpeaks shouldn't have entries in that df
         train_nonpeaks_seqs, train_nonpeaks_cts, train_nonpeaks_cts_ctrl, train_nonpeaks_coords = get_seq_cts_coords(
             nonpeak_regions,
             genome,
             cts_bw,
             cts_ctrl_bw,
             inputlen,
-            output_len,
-            peaks_bool=0
+            output_len_neg,
+            peaks_bool=0,
         )
 
     cts_bw.close()
@@ -499,7 +525,6 @@ def random_crop(seqs, labels, labels_ctrl, seq_crop_width, label_crop_width, coo
     if labels_ctrl is not None:
         assert(seqs.shape[1] - seq_crop_width == labels_ctrl.shape[1] - label_crop_width)
 
-    # TODO_NOW: pretty sure max_start should be "(seqs.shape[1] - seq_crop_width) // 2"?
     max_start = seqs.shape[1] - seq_crop_width
     starts = np.random.choice(range(max_start+1), size=seqs.shape[0], replace=True)
     new_coords = coords.copy()
@@ -552,12 +577,12 @@ def revcomp_shuffle_augment(seqs, labels, coords, add_revcomp, rc_frac=0.5, shuf
     return mod_seqs, mod_labels, mod_coords
     
 def crop_revcomp_data(
-    peak_seqs, peak_cts, peak_coords, 
-    nonpeak_seqs=None, nonpeak_cts=None, nonpeak_coords=None, 
+    peak_seqs, peak_cts, peak_cts_ctrl, peak_coords, 
+    nonpeak_seqs=None, nonpeak_cts=None, nonpeak_cts_ctrl=None, nonpeak_coords=None, 
     per_bin_peak_cts_dict=None, per_bin_peak_cts_ctrl_dict=None,
     per_bin_nonpeak_cts_dict=None, per_bin_nonpeak_cts_ctrl_dict=None,
     inputlen=2114, outputlen=1000, output_bins: list = None,
-    add_revcomp=False, negative_sampling_ratio=0.1, shuffle=False):
+    add_revcomp=False, negative_sampling_ratio=0.1, shuffle=False, do_crop=True):
     """Apply random cropping and reverse complement augmentation to the data.
         
         This method:
@@ -569,10 +594,12 @@ def crop_revcomp_data(
     def crop_peak_data():
         if output_bins is None:
             cropped_peaks, cropped_cnts, cropped_cnts_ctrl, cropped_coords, _ = random_crop(
-                peak_seqs, peak_cts, None, inputlen, outputlen, peak_coords
-            )
+                peak_seqs, peak_cts, peak_cts_ctrl, inputlen, outputlen, peak_coords
+            ) if do_crop else (peak_seqs, peak_cts, peak_cts_ctrl, peak_coords, None)
             return cropped_peaks, cropped_cnts, cropped_cnts_ctrl, cropped_coords
         else:
+            # I dont expect a path where do_crop is False and output_bins is not None
+            assert do_crop
             cropped_cnts = {}
             cropped_cnts_ctrl = {}
             starts = None
@@ -593,7 +620,6 @@ def crop_revcomp_data(
         # Sample negative examples
         # valeh: why is this needed btw? dont we do this during pre-processing?
         if negative_sampling_ratio > 0:
-            # TODO handle for histobpnet
             if output_bins is not None:
                 raise NotImplementedError("Subsampling non-peak data with output bins is not implemented yet.")
             sampled_nonpeak_seqs, sampled_nonpeak_cts, sampled_nonpeak_coords = subsample_nonpeak_data(
@@ -609,7 +635,7 @@ def crop_revcomp_data(
 
             if output_bins is None:
                 cts = np.vstack([cropped_cnts, nonpeak_cts])
-                cts_ctrl = None
+                cts_ctrl = None if nonpeak_cts_ctrl is None else np.vstack([cropped_cnts_ctrl, nonpeak_cts_ctrl])
             else:
                 # concatenate dicts
                 cts, cts_ctrl = {}, {}
@@ -627,19 +653,16 @@ def crop_revcomp_data(
         # Only non-peak data
         seqs = nonpeak_seqs
         coords = nonpeak_coords
-        cts = per_bin_nonpeak_cts_dict
-        cts_ctrl = per_bin_nonpeak_cts_ctrl_dict
+        cts = nonpeak_cts if output_bins is None else per_bin_nonpeak_cts_dict
+        cts_ctrl = nonpeak_cts_ctrl if output_bins is None else per_bin_nonpeak_cts_ctrl_dict
     else:
         raise ValueError("Both peak and non-peak arrays are empty")
 
     # Apply revcomp and shuffle augmentations
-    if output_bins is None:
+    if add_revcomp or shuffle:
         seqs, cts, coords = revcomp_shuffle_augment(
             seqs, cts, coords,
             add_revcomp, shuffle=shuffle
         )
-    else:
-        # TODO handle per-bin cts and cts_ctrl
-        return seqs, cts, cts_ctrl, coords
-    
-    return seqs, cts, coords
+
+    return seqs, cts, cts_ctrl, coords
