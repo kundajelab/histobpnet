@@ -37,7 +37,7 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument('--checkpoint', '-c', type=str, default=None,
                        help='Path to model checkpoint')
     # what s bias_scaled as opposed to regular bias model? -> see https://github.com/kundajelab/chrombpnet/wiki/Output-format
-    parser.add_argument('--bias_scaled', type=str, required=True,
+    parser.add_argument('--bias_scaled', type=str, default=None,
                        help='Path to bias scaled model')
     # this is only used for training (and I think fine-tuning), TODO_later move it to their respective subparsers
     parser.add_argument('--chrombpnet_wo_bias', type=str, default=None,
@@ -50,8 +50,9 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--cvd", dest="cvd", default=None, help="Value to set for CUDA_VISIBLE_DEVICES")
     
     # Add model-specific arguments
-    ChromBPNetConfig.add_argparse_args(parser)
-    HistoBPNetConfigV1.add_argparse_args(parser)
+    # TODO currently cant have all of these together, find a way to fix later
+    # ChromBPNetConfig.add_argparse_args(parser)
+    # HistoBPNetConfigV1.add_argparse_args(parser)
     HistoBPNetConfigV2.add_argparse_args(parser)
 
     # Add data configuration arguments
@@ -344,7 +345,7 @@ def main(instance_id: str):
     # wandb.init(project="expression-models", name=config["run_name"]+"|"+instance_id, config=config)
 
     if args.command == 'train':
-        assert args.model_type == 'histobpnet', "Train currently only supported for histobpnet"
+        assert is_histone(args.model_type), "Train currently only supported for histobpnet"
         train(args, output_dir, logger)
         model = load_model(args, output_dir)
         predict(args, model)

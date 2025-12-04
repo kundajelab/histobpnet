@@ -59,9 +59,9 @@ class DataModule(L.LightningDataModule):
         # Set dataset class based on data type
         if self.config.data_type == 'profile':
             self.dataset_class = ChromBPNetDataset
-        elif self.config.data_type == 'histone_v1':
+        elif self.config.data_type == 'histobpnet_v1':
             self.dataset_class = HistoBPNetDatasetV1
-        elif self.config.data_type == 'histone_v2':
+        elif self.config.data_type == 'histobpnet_v2':
             self.dataset_class = HistoBPNetDatasetV2
         else:
             raise NotImplementedError(f'Unsupported data type: {self.config.data_type}')
@@ -148,6 +148,7 @@ class DataModule(L.LightningDataModule):
                 add_revcomp=True,
                 return_coords=False,
                 shuffle_at_epoch_start=False,
+                rc_frac=config.rc_frac,
             )
             self.val_dataset = self.dataset_class(
                 peak_regions=val_peaks,
@@ -164,6 +165,7 @@ class DataModule(L.LightningDataModule):
                 add_revcomp=False,
                 return_coords=False,
                 shuffle_at_epoch_start=False, 
+                rc_frac=config.rc_frac,
             )
         elif stage == 'test':
             test_peaks, test_nonpeaks = split_peak_and_nonpeak(self.test_data)
@@ -182,6 +184,7 @@ class DataModule(L.LightningDataModule):
                 add_revcomp=False,
                 return_coords=False,
                 shuffle_at_epoch_start=False, 
+                rc_frac=config.rc_frac,
             )
 
         print(f'Data setup complete in {time() - t0:.2f} seconds')
@@ -288,6 +291,7 @@ class DataModule(L.LightningDataModule):
             return_coords=False,
             shuffle_at_epoch_start=False,
             debug=self.config.debug,
+            rc_frac=self.config.rc_frac,
         )
         return dataset
 
@@ -311,6 +315,7 @@ class ChromBPNetDataset(torch.utils.data.Dataset):
         add_revcomp=False, 
         return_coords=False,    
         shuffle_at_epoch_start=False, 
+        rc_frac=0.5,
         debug=False,
         **kwargs
     ):
@@ -348,6 +353,7 @@ class ChromBPNetDataset(torch.utils.data.Dataset):
         self.add_revcomp = add_revcomp
         self.return_coords = return_coords
         self.shuffle_at_epoch_start = shuffle_at_epoch_start
+        self.rc_frac = rc_frac
         self.max_jitter = max_jitter
         self.genome_fasta = genome_fasta
         self.cts_bw_file = cts_bw_file
@@ -380,7 +386,8 @@ class ChromBPNetDataset(torch.utils.data.Dataset):
             outputlen=self.outputlen,
             add_revcomp=self.add_revcomp,
             negative_sampling_ratio=self.negative_sampling_ratio,
-            shuffle=self.shuffle_at_epoch_start
+            shuffle=self.shuffle_at_epoch_start,
+            rc_frac=self.rc_frac,
         )
 
     def _get_adj(self):
@@ -419,13 +426,16 @@ class HistoBPNetDatasetV1(ChromBPNetDataset):
         add_revcomp=False, 
         return_coords=False,    
         shuffle_at_epoch_start=False, 
+        rc_frac=0.5,
         debug=False,
         **kwargs
     ):
         assert negative_sampling_ratio == -1
-        assert not add_revcomp
-        assert not shuffle_at_epoch_start
-    
+        assert rc_frac == 0
+        if shuffle_at_epoch_start:
+            # I just need to change revcomp_shuffle_augment to shuffle labels for all dict elements...
+            raise NotImplementedError("shuffle_at_epoch_start must be False for HistoBPNetDatasetV1")
+        
         if debug:
             peak_regions = debug_subsample(peak_regions)
             nonpeak_regions = debug_subsample(nonpeak_regions)
@@ -458,6 +468,7 @@ class HistoBPNetDatasetV1(ChromBPNetDataset):
         self.add_revcomp = add_revcomp
         self.return_coords = return_coords
         self.shuffle_at_epoch_start = shuffle_at_epoch_start
+        self.rc_frac = rc_frac
         self.max_jitter = max_jitter
         self.genome_fasta = genome_fasta
         self.cts_bw_file = cts_bw_file
@@ -503,7 +514,7 @@ class HistoBPNetDatasetV1(ChromBPNetDataset):
             self.per_bin_peak_cts_dict, self.per_bin_peak_cts_ctrl_dict,
             self.per_bin_nonpeak_cts_dict, self.per_bin_nonpeak_cts_ctrl_dict,
             self.inputlen, self.outputlen, self.output_bins,
-            self.add_revcomp, self.negative_sampling_ratio, self.shuffle_at_epoch_start)
+            self.add_revcomp, self.negative_sampling_ratio, self.shuffle_at_epoch_start, rc_frac=self.rc_frac)
         
     def __getitem__(self, idx):
         return {
@@ -529,13 +540,13 @@ class HistoBPNetDatasetV2(ChromBPNetDataset):
         add_revcomp=False, 
         return_coords=False,    
         shuffle_at_epoch_start=False, 
+        rc_frac=0.5,
         debug=False,
         **kwargs
     ):
         assert max_jitter == 0
         assert negative_sampling_ratio == -1
-        assert not add_revcomp
-        assert not shuffle_at_epoch_start
+        assert rc_frac == 0
 
         if debug:
             peak_regions = debug_subsample(peak_regions)
@@ -560,6 +571,7 @@ class HistoBPNetDatasetV2(ChromBPNetDataset):
         self.add_revcomp = add_revcomp
         self.return_coords = return_coords
         self.shuffle_at_epoch_start = shuffle_at_epoch_start
+        self.rc_frac = rc_frac
         self.max_jitter = max_jitter
         self.genome_fasta = genome_fasta
         self.cts_bw_file = cts_bw_file
@@ -582,7 +594,8 @@ class HistoBPNetDatasetV2(ChromBPNetDataset):
             add_revcomp=self.add_revcomp,
             negative_sampling_ratio=self.negative_sampling_ratio,
             shuffle=self.shuffle_at_epoch_start,
-            do_crop=False
+            do_crop=False,
+            rc_frac=self.rc_frac,
         )
 
     def __getitem__(self, idx):

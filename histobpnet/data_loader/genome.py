@@ -333,38 +333,40 @@ GRCh38 = Genome(
 )
 hg38 = GRCh38
 
-# hg19
-hg19_d = hg19_datasets()
-GRCh37 = Genome(
-    fasta=lambda : hg19_d.fetch(
-        "hg19.fa", 
-        progressbar=True, processor=Decompress(method="gzip", name="hg19.fa")
-    ),
-    annotation=lambda : hg19_d.fetch(
-        "hg19.gtf.gz", 
-        progressbar=True
-    ),
-    chrom_sizes= hg19_d.fetch(
-        "hg19.chrom.sizes", 
-        progressbar=True
-    ),
-)
-hg19 = GRCh37
+# # hg19
+# hg19_d = hg19_datasets()
+# GRCh37 = Genome(
+#     fasta=lambda : hg19_d.fetch(
+#         "hg19.fa", 
+#         progressbar=True, processor=Decompress(method="gzip", name="hg19.fa")
+#     ),
+#     annotation=lambda : hg19_d.fetch(
+#         "hg19.gtf.gz", 
+#         progressbar=True
+#     ),
+#     chrom_sizes= hg19_d.fetch(
+#         "hg19.chrom.sizes", 
+#         progressbar=True
+#     ),
+# )
+# hg19 = GRCh37
+hg19 = None
 
-# mm10
-mm10_d = mm10_datasets()
-GRCm38 = Genome(
-    fasta=lambda : mm10_d.fetch(
-        "mm10.fa", 
-        progressbar=True
-    ),
-    annotation=lambda : mm10_d.fetch(
-        "mm10.gtf.gz", 
-        progressbar=True
-    ),
-    chrom_sizes= mm10_d.fetch(
-        "mm10.chrom.sizes", 
-        progressbar=True
-    ),
-)
-mm10 = GRCm38
+# # mm10
+# mm10_d = mm10_datasets()
+# GRCm38 = Genome(
+#     fasta=lambda : mm10_d.fetch(
+#         "mm10.fa", 
+#         progressbar=True
+#     ),
+#     annotation=lambda : mm10_d.fetch(
+#         "mm10.gtf.gz", 
+#         progressbar=True
+#     ),
+#     chrom_sizes= mm10_d.fetch(
+#         "mm10.chrom.sizes", 
+#         progressbar=True
+#     ),
+# )
+# mm10 = GRCm38
+mm10 = None

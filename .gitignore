@@ -197,3 +197,4 @@ cython_debug/
 wandb/
 .vscode/
 local/
+*.npy

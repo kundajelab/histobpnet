@@ -4,6 +4,7 @@ from argparse import ArgumentParser, Namespace
 import os
 import json
 from histobpnet.utils.parse_utils import add_argparse_args, from_argparse_args
+from histobpnet.utils.general_utils import is_histone
 from .genome import hg38, hg38_datasets, mm10, mm10_datasets
 
 @dataclass
@@ -31,8 +32,9 @@ class DataConfig:
         out_window: int = 1000,
         output_bins: str = "",
         atac_hgp_map: str = "",
+        ctrl_scaling_factor: float = 1.0,
         shift: int = 500,
-        rc: float = 0.5,
+        rc_frac: float = 0.5,
         outlier_threshold: float = 0.999,
         data_type: str = 'profile',
         exclude_chroms: List = None,
@@ -71,8 +73,9 @@ class DataConfig:
         self.out_window = out_window
         self.output_bins = output_bins
         self.atac_hgp_map = atac_hgp_map
+        self.ctrl_scaling_factor = ctrl_scaling_factor
         self.shift = shift
-        self.rc = rc
+        self.rc_frac = rc_frac
         self.outlier_threshold = outlier_threshold
         self.data_type = data_type
         self.batch_size = batch_size    
@@ -145,5 +148,5 @@ class DataConfig:
     
     def _validate_data_type(self):
         """Validate data type parameter."""
-        if self.data_type not in ['profile', 'longrange', 'histone_profile']:
-            raise ValueError("Data type must be either 'profile', 'longrange', or 'histone_profile'")
+        if self.data_type not in ['profile', 'longrange'] and not is_histone(self.data_type):
+            raise ValueError("Data type must be either 'profile', 'longrange', or 'histobpnet_v*'")

@@ -54,10 +54,11 @@ class HistoBPNetConfigV1(BaseConfig):
         conv1_kernel_size: int = 21,
         profile_kernel_size: int = 0,
         n_outputs: int = 1,
-        # TODO_NOW fix bins
-        output_bins: str = "1000, 2000, 4000, 8000, 16000",
+        # n_control_tracks: int = None, 
         profile_output_bias: bool = True, 
         count_output_bias: bool = True, 
+        # TODO_NOW fix bins
+        output_bins: str = "1000, 2000, 4000, 8000, 16000",
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -68,11 +69,16 @@ class HistoBPNetConfigV1(BaseConfig):
         self.conv1_kernel_size = conv1_kernel_size
         self.profile_kernel_size = profile_kernel_size
         self.n_outputs = n_outputs
+        # this is a very weird thing to do but it's b/c the code is not written well IMO
+        # in short, BPNeWrapper needs args.n_control_tracks to be set, but it's actually irrelevant
+        # for histobpnet models, and for this models n_control_tracks *must* be equal to len(output_bins)
+        # so we actually dont want to allow n_control_tracks to be set by the user
+        # assert n_control_tracks is None
+        self.profile_output_bias = profile_output_bias
+        self.count_output_bias = count_output_bias
         self.output_bins = [int(x) for x in output_bins.split(",")]
         self.n_control_tracks = len(self.output_bins)
         self.n_count_outputs = len(self.output_bins)
-        self.profile_output_bias = profile_output_bias
-        self.count_output_bias = count_output_bias
 
 class HistoBPNetConfigV2(BaseConfig):
     model_type = "histobpnet_v2"
@@ -85,6 +91,7 @@ class HistoBPNetConfigV2(BaseConfig):
         conv1_kernel_size: int = 21,
         profile_kernel_size: int = 0,
         n_outputs: int = 1,
+        # n_control_tracks: int = None, 
         profile_output_bias: bool = True, 
         count_output_bias: bool = True, 
         **kwargs,
@@ -97,7 +104,9 @@ class HistoBPNetConfigV2(BaseConfig):
         self.conv1_kernel_size = conv1_kernel_size
         self.profile_kernel_size = profile_kernel_size
         self.n_outputs = n_outputs
-        self.n_control_tracks = 1
-        self.n_count_outputs = 1
+        # see note in HistoBPNetConfigV1 about this weird assert
+        # assert n_control_tracks is None
         self.profile_output_bias = profile_output_bias
         self.count_output_bias = count_output_bias
+        self.n_control_tracks = 1
+        self.n_count_outputs = 1

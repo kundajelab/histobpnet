@@ -36,7 +36,7 @@ class HistoBPNetV2(nn.Module):
         Operates in-place!
         """
         # print("Reinitializing with TF strategy")
-        for m in self.model.modules():
+        for m in self.modules():
             if isinstance(m, nn.Conv1d) or isinstance(m, nn.Linear):
                 if hasattr(m, 'weight') and m.weight is not None:
                     nn.init.xavier_uniform_(m.weight)

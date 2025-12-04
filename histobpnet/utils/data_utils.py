@@ -54,7 +54,8 @@ def expand_3col_to_10col(df):
     df['summit'] = df['summit'].astype(int)
     return df
 
-def load_region_df(regions_bed, chrom_sizes=None, in_window=2114, shift=0, is_peak: bool=True, logger=None, width=500):
+# TODO pass in width as an arg maybe and at the call site
+def load_region_df(regions_bed, chrom_sizes=None, in_window=2114, shift=0, is_peak: bool=True, logger=None, width=2114):
     """
     Load the DataFrame and, optionally, filter regions in it that exceed defined chromosome sizes.
     """
@@ -134,6 +135,15 @@ def get_cts(peaks_df, bw, width, atac_hgp_df=None):
 
     return shape: (len(peaks_df), width)
     """
+    if atac_hgp_df is not None:
+        u = (atac_hgp_df["end"] - atac_hgp_df["start"]).unique()
+        assert u.shape[0] == 1, "All ATAC-Histone mapping regions must have the same length."
+        peak_len_a = u[0]
+        u2 = (peaks_df["end"] - peaks_df["start"]).unique()
+        assert u2.shape[0] == 1, "All ATAC peaks must have the same length."
+        peak_len_b = u2[0]
+        assert peak_len_a == peak_len_b, "ATAC-Histone mapping regions must have the same length as ATAC peaks."
+
     vals = []
     for _, r in peaks_df.iterrows():
         if atac_hgp_df is None:
@@ -582,7 +592,7 @@ def crop_revcomp_data(
     per_bin_peak_cts_dict=None, per_bin_peak_cts_ctrl_dict=None,
     per_bin_nonpeak_cts_dict=None, per_bin_nonpeak_cts_ctrl_dict=None,
     inputlen=2114, outputlen=1000, output_bins: list = None,
-    add_revcomp=False, negative_sampling_ratio=0.1, shuffle=False, do_crop=True):
+    add_revcomp=False, negative_sampling_ratio=0.1, shuffle=False, do_crop=True, rc_frac: float=0.5):
     """Apply random cropping and reverse complement augmentation to the data.
         
         This method:
@@ -659,10 +669,11 @@ def crop_revcomp_data(
         raise ValueError("Both peak and non-peak arrays are empty")
 
     # Apply revcomp and shuffle augmentations
-    if add_revcomp or shuffle:
+    # if rc_frac == 0, there is nothing to revcomp
+    if (add_revcomp and rc_frac > 0) or shuffle:
         seqs, cts, coords = revcomp_shuffle_augment(
             seqs, cts, coords,
-            add_revcomp, shuffle=shuffle
+            add_revcomp, shuffle=shuffle, rc_frac=rc_frac
         )
 
     return seqs, cts, cts_ctrl, coords

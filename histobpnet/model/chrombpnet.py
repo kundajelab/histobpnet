@@ -57,6 +57,8 @@ class ChromBPNet(nn.Module):
         Operates in-place!
         """
         # print("Reinitializing with TF strategy")
+        # the initialization is only for accessibility model (self.model), since the bias is often trained separately
+        # and loaded directly. If that's not the case, however, we may want to init both. TODO
         for m in self.model.modules():
             if isinstance(m, nn.Conv1d) or isinstance(m, nn.Linear):
                 if hasattr(m, 'weight') and m.weight is not None:

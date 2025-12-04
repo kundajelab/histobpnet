@@ -136,6 +136,11 @@ class ModelWrapper(LightningModule):
         """
         return self.model(x, **kwargs)
 
+    def configure_optimizers(self):
+        # TODO_NOW validate that self.model will be the right model...
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr, eps=self.optimizer_eps)
+        return optimizer
+    
     def _step(self, batch, batch_idx, mode='train'):
         raise NotImplementedError("Subclasses must implement this method")
 
@@ -314,10 +319,6 @@ class BPNetWrapper(ModelWrapper):
         self.log_dict(dict_show, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
 
         return loss
-        
-    def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr, eps=self.optimizer_eps)
-        return optimizer
 
     # TODO review
     def predict(self, x, forward_only=True):
@@ -334,7 +335,7 @@ class BPNetWrapper(ModelWrapper):
 
         return y_profile.cpu().numpy(), y_count.cpu().numpy()
     
-class ChromBPNetWrapper(BPNetWrapper):
+class ChromBPNetWrapper(ModelWrapper):
     """Wrapper for ChromBPNet model with specific configurations and loss functions.
     
     This wrapper extends the base ModelWrapper to handle ChromBPNet-specific features
@@ -358,7 +359,7 @@ class ChromBPNetWrapper(BPNetWrapper):
         config = ChromBPNetConfig.from_argparse_args(args)
         self.model = ChromBPNet(config)
 
-class HistoBPNetWrapperV1(BPNetWrapper):
+class HistoBPNetWrapperV1(ModelWrapper):
     def __init__(
         self,
         args,
@@ -437,7 +438,7 @@ class HistoBPNetWrapperV1(BPNetWrapper):
 
         return true_binned_logsum, true_binned_logsum_ctl
 
-class HistoBPNetWrapperV2(BPNetWrapper):
+class HistoBPNetWrapperV2(ModelWrapper):
     def __init__(
         self,
         args,
