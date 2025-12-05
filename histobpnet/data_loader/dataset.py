@@ -22,7 +22,7 @@ from histobpnet.utils.data_utils import (
     crop_revcomp_data,
     debug_subsample,
 )
-from histobpnet.utils.general_utils import is_histone
+from histobpnet.utils.general_utils import is_histone, add_peak_id
 
 class DataModule(L.LightningDataModule):
     """DataModule for loading and processing genomic data for training and evaluation.
@@ -96,6 +96,7 @@ class DataModule(L.LightningDataModule):
             shift=self.config.shift,
             is_peak=True
         )
+        add_peak_id(self.peaks)
         
         if self.config.negatives is not None:
             self.negatives = load_region_df(
@@ -105,6 +106,7 @@ class DataModule(L.LightningDataModule):
                 shift=self.config.shift,
                 is_peak=False
             )
+            add_peak_id(self.negatives)
             self.data = pd.concat([self.peaks, self.negatives], ignore_index=True)
         else:
             self.negatives = None
@@ -554,13 +556,15 @@ class HistoBPNetDatasetV2(ChromBPNetDataset):
 
         assert atac_hgp_map != ""
         atac_hgp_df = pd.read_csv(atac_hgp_map, sep="\t", header=0)
+        add_peak_id(atac_hgp_df, chr_key="chrom")
 
         # Load data
         self.peak_seqs, self.peak_cts, self.peak_cts_ctrl, self.peak_coords, \
         self.nonpeak_seqs, self.nonpeak_cts, self.nonpeak_cts_ctrl, self.nonpeak_coords = load_data(
             peak_regions, nonpeak_regions, genome_fasta, cts_bw_file,
             inputlen, outputlen, max_jitter,
-            cts_ctrl_bw_file=cts_ctrl_bw_file, output_bins=output_bins, atac_hgp_df=atac_hgp_df
+            # TODO_later maybe make get_total_cts an arg
+            cts_ctrl_bw_file=cts_ctrl_bw_file, output_bins=output_bins, atac_hgp_df=atac_hgp_df, get_total_cts=True,
         )
 
         # Store parameters

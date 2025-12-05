@@ -1,3 +1,4 @@
+import gc
 import numpy as np
 import pandas as pd
 import pyBigWig
@@ -23,11 +24,10 @@ def read_chrom_sizes(fname):
 
     return gs
 
-# format_region modifies the start and end columns of a DataFrame
+# center_region_around_summit modifies the start and end columns of a DataFrame
 # to center the region around the summit and set the width to a specified value.
 # It also sets the summit to be half of the width.
-# A better name for this function could be `center_region_around_summit`.
-def format_region(df, width=500):
+def center_region_around_summit(df, width):
     df.loc[:, 'start'] = df.loc[:, 'start'].astype(np.int64) + df.loc[:, 'summit'] - width // 2
     df.loc[:, 'end'] = df.loc[:, 'start'] + width 
     df.loc[:, 'summit'] = width // 2
@@ -54,8 +54,8 @@ def expand_3col_to_10col(df):
     df['summit'] = df['summit'].astype(int)
     return df
 
-# TODO pass in width as an arg maybe and at the call site
-def load_region_df(regions_bed, chrom_sizes=None, in_window=2114, shift=0, is_peak: bool=True, logger=None, width=2114):
+# width used to default to 500, Lei said the only reason he added that was for RegNet so I've removed it
+def load_region_df(regions_bed, chrom_sizes=None, in_window=2114, shift=0, is_peak: bool=True, logger=None, width=None):
     """
     Load the DataFrame and, optionally, filter regions in it that exceed defined chromosome sizes.
     """
@@ -88,8 +88,9 @@ def load_region_df(regions_bed, chrom_sizes=None, in_window=2114, shift=0, is_pe
         filtered_df = df
     filtered_df.columns = ['chr', 'start', 'end', 'name', 'score', 'strand', 'signalValue', 'pValue', 'qValue', 'summit', 'is_peak']
 
+    width = width if width is not None else in_window
     cprint(f"Formatting {filtered_df.shape[0]} regions from {regions_bed} using width {width}.", logger=logger)
-    filtered_df = format_region(filtered_df, width=width)
+    filtered_df = center_region_around_summit(filtered_df, width)
 
     # Reset index to avoid index errors
     return filtered_df.reset_index(drop=True)
@@ -125,7 +126,7 @@ def split_peak_and_nonpeak(data):
     peaks = data[data['is_peak']].copy()
     return peaks, non_peaks
 
-def get_cts(peaks_df, bw, width, atac_hgp_df=None):
+def get_cts(peaks_df, bw, width, atac_hgp_df=None, get_total_cts: bool = False):
     """
     Fetches values from a bigwig bw, given a df with minimally
     chr, start and summit columns. Summit is relative to start.
@@ -135,6 +136,8 @@ def get_cts(peaks_df, bw, width, atac_hgp_df=None):
 
     return shape: (len(peaks_df), width)
     """
+    vals = []
+
     if atac_hgp_df is not None:
         u = (atac_hgp_df["end"] - atac_hgp_df["start"]).unique()
         assert u.shape[0] == 1, "All ATAC-Histone mapping regions must have the same length."
@@ -144,29 +147,48 @@ def get_cts(peaks_df, bw, width, atac_hgp_df=None):
         peak_len_b = u2[0]
         assert peak_len_a == peak_len_b, "ATAC-Histone mapping regions must have the same length as ATAC peaks."
 
-    vals = []
-    for _, r in peaks_df.iterrows():
-        if atac_hgp_df is None:
-            vals.append(np.nan_to_num(bw.values(r['chr'], 
-                                                r['start'] + r['summit'] - width//2,
-                                                r['start'] + r['summit'] + width//2)))
-        else:
-            idx = (atac_hgp_df["chrom"] == r['chr']) & (atac_hgp_df["start"] == r['start']) & (atac_hgp_df["end"] == r['end'])
-            if idx.sum() == 1:
-                hist_chrom = atac_hgp_df.loc[idx, 'hist_chrom'].values[0]
-                hist_start = atac_hgp_df.loc[idx, 'hist_start'].values[0]
-                hist_end = atac_hgp_df.loc[idx, 'hist_end'].values[0]
-                if hist_chrom == '.':
-                    vals.append(np.zeros(width))
-                else:
-                    a = np.nan_to_num(bw.values(hist_chrom, hist_start, hist_end))
-                    # pad to width w/ 0
-                    a_pad = np.pad(a, (0, width - len(a)), 'constant', constant_values=0)
-                    vals.append(a_pad)
-            elif idx.sum() == 0:
+        merged = peaks_df.merge(
+            atac_hgp_df[["peak_id", "hist_chrom", "hist_start", "hist_end"]],
+            on="peak_id",
+            how="left"
+        )
+        if len(merged) != len(peaks_df):
+            raise ValueError("Some peaks in peaks_df have multiple matches in atac_hgp_df based on peak_id.")
+        for _, r in merged.iterrows():
+            if pd.isna(r['hist_chrom']):
                 raise ValueError(f"No matching ATAC-Histone mapping found for region: {r['chr']}:{r['start']}-{r['end']}")
+            elif r.hist_chrom == '.':
+                if get_total_cts:
+                    vals.append(np.array([0]))
+                else:
+                    vals.append(np.zeros(width))
             else:
-                raise ValueError(f"Multiple matching ATAC-Histone mappings found for region: {r['chr']}:{r['start']}-{r['end']}")
+                if not get_total_cts:
+                    raw = bw.values(r.hist_chrom, r.hist_start, r.hist_end)
+                    # pad to width w/ 0
+                    padded = np.zeros(width, dtype=float)
+                    padded[:len(raw)] = raw
+                    # TODO_later should prob make this a sparse matrix. also validate 
+                    vals.append(np.nan_to_num(padded))
+                else:
+                    vals.append(np.array([
+                        np.nansum(bw.values(r.hist_chrom, r.hist_start, r.hist_end))
+                    ]))
+    else:
+        for _, r in peaks_df.iterrows():
+            if not get_total_cts:
+                vals.append(
+                    np.nan_to_num(bw.values(r['chr'],
+                                            r['start'] + r['summit'] - width//2,
+                                            r['start'] + r['summit'] + width//2))
+                )
+            else:
+                vals.append(np.array([
+                    np.nansum(bw.values(r['chr'],
+                                        r['start'] + r['summit'] - width//2,
+                                        r['start'] + r['summit'] + width//2))
+                ]))
+
     return np.array(vals)
 
 def get_seq(peaks_df, genome, width):
@@ -191,10 +213,34 @@ def get_coords(peaks_df, peaks_bool):
 
     return np.array(vals)
 
-def get_seq_cts_coords(peaks_df, genome, bw, bw_ctrl, input_width, output_width, peaks_bool, atac_hgp_df=None):
-    seq = get_seq(peaks_df, genome, input_width)
-    cts = get_cts(peaks_df, bw, output_width, atac_hgp_df=atac_hgp_df)
-    cts_ctrl = get_cts(peaks_df, bw_ctrl, output_width, atac_hgp_df=atac_hgp_df) if bw_ctrl is not None else None
+def get_seq_cts_coords(peaks_df, genome, bw, bw_ctrl, input_width, output_width, peaks_bool, atac_hgp_df=None, get_total_cts: bool = False):
+    peaks_str = "peaks" if peaks_bool==1 else "nonpeaks"
+    
+    # TODO_later remove this after im done debugging
+    temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/train/seqs_{peaks_str}.npy"
+    if not os.path.isfile(temp_p):
+        seq = get_seq(peaks_df, genome, input_width)
+        np.save(temp_p, seq)
+    else:
+        seq = np.load(temp_p)
+
+    temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/train/cts_{peaks_str}_fast.npy"
+    if not os.path.isfile(temp_p):
+        cts = get_cts(peaks_df, bw, output_width, atac_hgp_df=atac_hgp_df, get_total_cts=get_total_cts)
+        np.save(temp_p, cts)
+    else:
+        cts = np.load(temp_p)
+
+    if bw_ctrl is None:
+        cts_ctrl = None
+    else:
+        temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/train/cts_ctrl_{peaks_str}_fast.npy"
+        if not os.path.isfile(temp_p):
+            cts_ctrl = get_cts(peaks_df, bw_ctrl, output_width, atac_hgp_df=atac_hgp_df, get_total_cts=get_total_cts)
+            np.save(temp_p, cts_ctrl)
+        else:
+            cts_ctrl = np.load(temp_p) if bw_ctrl is not None else None
+
     coords = get_coords(peaks_df, peaks_bool)
     return seq, cts, cts_ctrl, coords
 
@@ -209,6 +255,7 @@ def load_data(
     cts_ctrl_bw_file = None,
     output_bins = None,
     atac_hgp_df = None,
+    get_total_cts = False,
 ):
     """
     Load sequences and corresponding base resolution counts for training, 
@@ -230,7 +277,7 @@ def load_data(
     elif atac_hgp_df is not None:
         output_len = (atac_hgp_df['hist_end'] - atac_hgp_df['hist_start']).max()
         # we'll use this for nonpeak regions since we dont know what a "good" outputlen should be
-        output_len_neg = (atac_hgp_df['hist_end'] - atac_hgp_df['hist_start']).mean()
+        output_len_neg = int((atac_hgp_df['hist_end'] - atac_hgp_df['hist_start']).mean())
     else:
         output_len = outputlen
         output_len_neg = output_len
@@ -258,6 +305,7 @@ def load_data(
             output_len+2*max_jitter,
             peaks_bool=1,
             atac_hgp_df=atac_hgp_df,
+            get_total_cts=get_total_cts,
         )
     
     if nonpeak_regions is not None:
@@ -272,6 +320,7 @@ def load_data(
             inputlen,
             output_len_neg,
             peaks_bool=0,
+            get_total_cts=get_total_cts,
         )
 
     cts_bw.close()

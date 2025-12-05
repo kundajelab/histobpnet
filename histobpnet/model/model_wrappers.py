@@ -109,7 +109,9 @@ class ModelWrapper(LightningModule):
         # it doesnt have to sum to 1 either, apparently
         self.beta = 1
         self.verbose = args.verbose
-        
+        self.lr = args.lr
+        self.optimizer_eps = args.optimizer_eps
+
         # Initialize metrics storage
         self.metrics = {
             'train': {'preds': [], 'targets': []},
@@ -136,10 +138,13 @@ class ModelWrapper(LightningModule):
         """
         return self.model(x, **kwargs)
 
-    def configure_optimizers(self):
+    def configure_optimizers(self) -> Union[torch.optim.Optimizer, Dict[str, Any]]:
         # TODO_NOW validate that self.model will be the right model...
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr, eps=self.optimizer_eps)
         return optimizer
+
+    # def configure_optimizers(self) -> Union[torch.optim.Optimizer, Dict[str, Any]]:
+    #     raise NotImplementedError("Subclasses must implement this method")
     
     def _step(self, batch, batch_idx, mode='train'):
         raise NotImplementedError("Subclasses must implement this method")
@@ -247,9 +252,6 @@ class ModelWrapper(LightningModule):
         """Handle end of test epoch."""
         self._epoch_end('test')
     
-    def configure_optimizers(self) -> Union[torch.optim.Optimizer, Dict[str, Any]]:
-        raise NotImplementedError("Subclasses must implement this method")
-
 class BPNetWrapper(ModelWrapper):
     """Wrapper for BPNet model with specific configurations and loss functions.
     
@@ -270,6 +272,7 @@ class BPNetWrapper(ModelWrapper):
             profile_output_bias=args.profile_output_bias, 
             count_output_bias=args.count_output_bias, 
         )
+        self.model_type = "bpnet"
 
     def _step(self, batch, batch_idx, mode: str = 'train'):
         assert mode in ['train', 'val', 'test', 'predict'], "Invalid mode. Must be one of ['train', 'val', 'test', 'predict']"
@@ -358,6 +361,7 @@ class ChromBPNetWrapper(ModelWrapper):
 
         config = ChromBPNetConfig.from_argparse_args(args)
         self.model = ChromBPNet(config)
+        self.model_type = config.model_type
 
 class HistoBPNetWrapperV1(ModelWrapper):
     def __init__(
@@ -368,6 +372,7 @@ class HistoBPNetWrapperV1(ModelWrapper):
 
         config = HistoBPNetConfigV1.from_argparse_args(args)
         self.model = HistoBPNetV1(config)
+        self.model_type = config.model_type
 
     def _step(self, batch, batch_idx, mode: str = 'train'):
         assert mode in ['train', 'val', 'test', 'predict'], "Invalid mode. Must be one of ['train', 'val', 'test', 'predict']"
@@ -383,7 +388,7 @@ class HistoBPNetWrapperV1(ModelWrapper):
         assert x.shape[0] == true_binned_logsum.shape[0], "Batch size of input sequence and true_binned_logsum must match"
         assert x.shape[0] == true_binned_logsum_ctl.shape[0], "Batch size of input sequence and true_binned_logsum_ctl must match"
 
-        y_count = self(x, observed_ctrl=true_binned_logsum_ctl) # batch_size x num_bins
+        _, y_count = self(x, observed_ctrl=true_binned_logsum_ctl) # batch_size x num_bins
 
         if mode == 'predict':
             return {
@@ -447,6 +452,7 @@ class HistoBPNetWrapperV2(ModelWrapper):
 
         config = HistoBPNetConfigV2.from_argparse_args(args)
         self.model = HistoBPNetV2(config)
+        self.model_type = config.model_type
 
     def _step(self, batch, batch_idx, mode: str = 'train'):
         assert mode in ['train', 'val', 'test', 'predict'], "Invalid mode. Must be one of ['train', 'val', 'test', 'predict']"
@@ -454,15 +460,20 @@ class HistoBPNetWrapperV2(ModelWrapper):
         x = batch['onehot_seq'] # batch_size x 4 x seq_length
         true_profile = batch['profile'] 
         true_profile_ctl = batch['profile_ctrl']
+        assert true_profile.shape == true_profile_ctl.shape, "Control profile shape must match chip profile shape"
 
         # TODO log or log1p?.... bpnet does log1p (see def count_head and def _step)
-        true_logsum, true_logsum_ctl = true_profile.sum(dim=-1).log1p(), true_profile_ctl.sum(dim=-1).log1p()
+        if true_profile.dim() == 2:
+            true_logsum, true_logsum_ctl = true_profile.sum(dim=-1).log1p(), true_profile_ctl.sum(dim=-1).log1p()
+        else:
+            true_logsum, true_logsum_ctl = true_profile.log1p(), true_profile_ctl.log1p()
 
         assert x.shape[1] == 4, "Input sequence must be one-hot encoded with 4 channels (A, C, G, T)"
         assert x.shape[0] == true_logsum.shape[0], "Batch size of input sequence and true_logsum must match"
         assert x.shape[0] == true_logsum_ctl.shape[0], "Batch size of input sequence and true_logsum_ctl must match"
         
-        y_count = self(x, observed_ctrl=true_logsum_ctl) # batch_size x 1
+        _, y_count = self(x, observed_ctrl=true_logsum_ctl) # batch_size x 1
+        y_count = y_count.squeeze(-1)
 
         if mode == 'predict':
             return {

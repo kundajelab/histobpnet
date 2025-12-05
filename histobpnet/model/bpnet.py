@@ -205,7 +205,7 @@ class BPNet(torch.nn.Module):
             pred_count = torch.cat([pred_count, torch.log1p(x_ctl)], dim=-1)
         # x_ctl_hist is of shape (batch_size, num_bins) if histobpnet_v1 else (batch_size, 1)
         if x_ctl_hist is not None:
-            pred_count = torch.cat([pred_count, x_ctl_hist], dim=-1)
+            pred_count = torch.cat([pred_count, x_ctl_hist.unsqueeze(-1)], dim=-1)
         pred_count = self.linear(pred_count)
         return pred_count
     
@@ -329,7 +329,7 @@ class BPNet(torch.nn.Module):
             model.fconv.weight = convert_w(w[fname][k])
             model.fconv.bias = convert_b(w[fname][b])
 
-        if model.for_histone != 'histobpnet_v1':
+        if model.for_histone not in ('histobpnet_v1', 'histobpnet_v2'):
             # TODO do we want to / can we partially initialize the weights or something?
             name = namer(prefix, "logcount_predictions")
             model.linear.weight = torch.nn.Parameter(torch.tensor(w[name][k][:].T))

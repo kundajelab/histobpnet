@@ -105,6 +105,7 @@ class HistoBPNetConfigV2(BaseConfig):
         self.profile_kernel_size = profile_kernel_size
         self.n_outputs = n_outputs
         # see note in HistoBPNetConfigV1 about this weird assert
+        # TODO remove this as I fixed it...
         # assert n_control_tracks is None
         self.profile_output_bias = profile_output_bias
         self.count_output_bias = count_output_bias
