@@ -32,6 +32,7 @@ class DataConfig:
         out_window: int = 1000,
         output_bins: str = "",
         atac_hgp_map: str = "",
+        skip_missing_hist: bool = False,
         ctrl_scaling_factor: float = 1.0,
         shift: int = 500,
         rc_frac: float = 0.5,
@@ -73,6 +74,7 @@ class DataConfig:
         self.out_window = out_window
         self.output_bins = output_bins
         self.atac_hgp_map = atac_hgp_map
+        self.skip_missing_hist = skip_missing_hist
         self.ctrl_scaling_factor = ctrl_scaling_factor
         self.shift = shift
         self.rc_frac = rc_frac

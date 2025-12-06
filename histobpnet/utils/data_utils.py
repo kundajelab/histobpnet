@@ -6,6 +6,7 @@ import pyfaidx
 import os
 from toolbox.logger import cprint
 from toolbox.one_hot import dna_to_one_hot
+from histobpnet.utils.general_utils import add_peak_id
 
 def html_to_pdf(input_html, output_pdf):
     from weasyprint import HTML, CSS
@@ -55,7 +56,17 @@ def expand_3col_to_10col(df):
     return df
 
 # width used to default to 500, Lei said the only reason he added that was for RegNet so I've removed it
-def load_region_df(regions_bed, chrom_sizes=None, in_window=2114, shift=0, is_peak: bool=True, logger=None, width=None):
+def load_region_df(
+    regions_bed,
+    chrom_sizes=None,
+    in_window=2114,
+    shift=0,
+    is_peak: bool=True,
+    logger=None,
+    width=None,
+    skip_missing_hist=False,
+    atac_hgp_map="",
+):
     """
     Load the DataFrame and, optionally, filter regions in it that exceed defined chromosome sizes.
     """
@@ -93,7 +104,28 @@ def load_region_df(regions_bed, chrom_sizes=None, in_window=2114, shift=0, is_pe
     filtered_df = center_region_around_summit(filtered_df, width)
 
     # Reset index to avoid index errors
-    return filtered_df.reset_index(drop=True)
+    filtered_df = filtered_df.reset_index(drop=True)
+
+    add_peak_id(filtered_df)
+
+    # filter out any regions that dont have a matching histone peak
+    if skip_missing_hist:
+        assert atac_hgp_map != ""
+        atac_hgp_df = pd.read_csv(atac_hgp_map, sep="\t", header=0)
+        add_peak_id(atac_hgp_df, chr_key="chrom")
+        merged = filtered_df.merge(
+            atac_hgp_df[["peak_id", "hist_chrom", "hist_start", "hist_end"]],
+            on="peak_id",
+            how="left"
+        )
+        if len(merged) != len(filtered_df):
+            raise ValueError("Some peaks in filtered_df have multiple matches in atac_hgp_df based on peak_id.")
+        idx = merged[merged['hist_chrom'] != '.'].index
+        pct_filtered = 100 * (len(filtered_df) - len(idx)) / len(filtered_df)
+        cprint(f"Filtering out {len(filtered_df) - len(idx)} regions ({pct_filtered:.2f}%) with no matching histone peak.", logger=logger)
+        filtered_df = filtered_df.loc[idx].reset_index(drop=True)
+
+    return filtered_df
 
 def subsample_nonpeak_data(nonpeak_seqs, nonpeak_cts, nonpeak_coords, peak_data_size, negative_sampling_ratio):
     # Randomly samples a portion of the non-peak data to use in training
@@ -126,7 +158,7 @@ def split_peak_and_nonpeak(data):
     peaks = data[data['is_peak']].copy()
     return peaks, non_peaks
 
-def get_cts(peaks_df, bw, width, atac_hgp_df=None, get_total_cts: bool = False):
+def get_cts(peaks_df, bw, width, atac_hgp_df=None, get_total_cts: bool = False, skip_missing_hist: bool = False):
     """
     Fetches values from a bigwig bw, given a df with minimally
     chr, start and summit columns. Summit is relative to start.
@@ -158,6 +190,7 @@ def get_cts(peaks_df, bw, width, atac_hgp_df=None, get_total_cts: bool = False):
             if pd.isna(r['hist_chrom']):
                 raise ValueError(f"No matching ATAC-Histone mapping found for region: {r['chr']}:{r['start']}-{r['end']}")
             elif r.hist_chrom == '.':
+                assert not skip_missing_hist, "skip_missing_hist is True but found missing histone peak."
                 if get_total_cts:
                     vals.append(np.array([0]))
                 else:
@@ -213,33 +246,47 @@ def get_coords(peaks_df, peaks_bool):
 
     return np.array(vals)
 
-def get_seq_cts_coords(peaks_df, genome, bw, bw_ctrl, input_width, output_width, peaks_bool, atac_hgp_df=None, get_total_cts: bool = False):
-    peaks_str = "peaks" if peaks_bool==1 else "nonpeaks"
-    
+def get_seq_cts_coords(
+    peaks_df,
+    genome,
+    bw,
+    bw_ctrl,
+    input_width,
+    output_width,
+    peaks_bool,
+    atac_hgp_df=None,
+    get_total_cts: bool = False,
+    skip_missing_hist: bool = False,
+):
     # TODO_later remove this after im done debugging
-    temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/train/seqs_{peaks_str}.npy"
-    if not os.path.isfile(temp_p):
-        seq = get_seq(peaks_df, genome, input_width)
-        np.save(temp_p, seq)
-    else:
-        seq = np.load(temp_p)
+    # peaks_str = "peaks" if peaks_bool==1 else "nonpeaks"
 
-    temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/train/cts_{peaks_str}_fast.npy"
-    if not os.path.isfile(temp_p):
-        cts = get_cts(peaks_df, bw, output_width, atac_hgp_df=atac_hgp_df, get_total_cts=get_total_cts)
-        np.save(temp_p, cts)
-    else:
-        cts = np.load(temp_p)
+    # temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/train/seqs_{peaks_str}.npy"
+    # if not os.path.isfile(temp_p):
+    #     seq = get_seq(peaks_df, genome, input_width)
+    #     np.save(temp_p, seq)
+    # else:
+    #     seq = np.load(temp_p)
+    seq = get_seq(peaks_df, genome, input_width)
+
+    # temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/train/cts_{peaks_str}_fast.npy"
+    # if not os.path.isfile(temp_p):
+    #     cts = get_cts(peaks_df, bw, output_width, atac_hgp_df=atac_hgp_df, get_total_cts=get_total_cts)
+    #     np.save(temp_p, cts)
+    # else:
+    #     cts = np.load(temp_p)
+    cts = get_cts(peaks_df, bw, output_width, atac_hgp_df=atac_hgp_df, get_total_cts=get_total_cts, skip_missing_hist=skip_missing_hist)
 
     if bw_ctrl is None:
         cts_ctrl = None
     else:
-        temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/train/cts_ctrl_{peaks_str}_fast.npy"
-        if not os.path.isfile(temp_p):
-            cts_ctrl = get_cts(peaks_df, bw_ctrl, output_width, atac_hgp_df=atac_hgp_df, get_total_cts=get_total_cts)
-            np.save(temp_p, cts_ctrl)
-        else:
-            cts_ctrl = np.load(temp_p) if bw_ctrl is not None else None
+        # temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/train/cts_ctrl_{peaks_str}_fast.npy"
+        # if not os.path.isfile(temp_p):
+        #     cts_ctrl = get_cts(peaks_df, bw_ctrl, output_width, atac_hgp_df=atac_hgp_df, get_total_cts=get_total_cts)
+        #     np.save(temp_p, cts_ctrl)
+        # else:
+        #     cts_ctrl = np.load(temp_p)
+        cts_ctrl = get_cts(peaks_df, bw_ctrl, output_width, atac_hgp_df=atac_hgp_df, get_total_cts=get_total_cts, skip_missing_hist=skip_missing_hist)
 
     coords = get_coords(peaks_df, peaks_bool)
     return seq, cts, cts_ctrl, coords
@@ -256,6 +303,7 @@ def load_data(
     output_bins = None,
     atac_hgp_df = None,
     get_total_cts = False,
+    skip_missing_hist = False,
 ):
     """
     Load sequences and corresponding base resolution counts for training, 
@@ -306,6 +354,7 @@ def load_data(
             peaks_bool=1,
             atac_hgp_df=atac_hgp_df,
             get_total_cts=get_total_cts,
+            skip_missing_hist=skip_missing_hist,
         )
     
     if nonpeak_regions is not None:
@@ -321,6 +370,7 @@ def load_data(
             output_len_neg,
             peaks_bool=0,
             get_total_cts=get_total_cts,
+            skip_missing_hist=skip_missing_hist,
         )
 
     cts_bw.close()

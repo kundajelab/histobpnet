@@ -169,8 +169,7 @@ def train(args, output_dir: str, logger):
         # run validation only at the end of each epoch
         val_check_interval=None,
         # https://chatgpt.com/s/t_6930903a25608191b8ebbcb3242ae142
-        # TODO_later ask Lei why he set it to True
-        strategy=DDPStrategy(find_unused_parameters=True),
+        strategy=DDPStrategy(find_unused_parameters=False),
         # So if early stopping kicks in after (say) epoch 17, then:
         # best_model.ckpt will be from the epoch with lowest val_loss up to epoch 17
         # last.ckpt will be the model as it was at epoch 17, the early-stopped point
@@ -283,7 +282,7 @@ def interpret(args, args_d, model, datamodule=None):
     # os.makedirs(os.path.join(out_dir, 'interpret'), exist_ok=True)
     # np.save(os.path.join(out_dir, 'interpret', 'mutagenesis.npy'), out)
 
-# TODO review
+# TODO review/refactor w/ train
 def finetune(args, logger):
     data_config = DataConfig.from_argparse_args(args)
     loggers=[L.pytorch.loggers.CSVLogger(args.out_dir, name=args.name, version=f'fold_{args.fold}')]

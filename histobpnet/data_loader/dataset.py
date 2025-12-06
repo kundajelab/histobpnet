@@ -94,9 +94,10 @@ class DataModule(L.LightningDataModule):
             chrom_sizes=self.config.chrom_sizes,
             in_window=self.config.in_window,
             shift=self.config.shift,
-            is_peak=True
+            is_peak=True,
+            skip_missing_hist=self.config.skip_missing_hist,
+            atac_hgp_map=self.config.atac_hgp_map,
         )
-        add_peak_id(self.peaks)
         
         if self.config.negatives is not None:
             self.negatives = load_region_df(
@@ -106,7 +107,6 @@ class DataModule(L.LightningDataModule):
                 shift=self.config.shift,
                 is_peak=False
             )
-            add_peak_id(self.negatives)
             self.data = pd.concat([self.peaks, self.negatives], ignore_index=True)
         else:
             self.negatives = None
@@ -147,6 +147,7 @@ class DataModule(L.LightningDataModule):
                 cts_ctrl_bw_file=config.bigwig_ctrl,
                 output_bins=config.output_bins,
                 atac_hgp_map=config.atac_hgp_map,
+                skip_missing_hist=config.skip_missing_hist,
                 add_revcomp=True,
                 return_coords=False,
                 shuffle_at_epoch_start=False,
@@ -164,6 +165,7 @@ class DataModule(L.LightningDataModule):
                 cts_ctrl_bw_file=config.bigwig_ctrl,
                 output_bins=config.output_bins,
                 atac_hgp_map=config.atac_hgp_map,
+                skip_missing_hist=config.skip_missing_hist,
                 add_revcomp=False,
                 return_coords=False,
                 shuffle_at_epoch_start=False, 
@@ -183,6 +185,7 @@ class DataModule(L.LightningDataModule):
                 cts_ctrl_bw_file=config.bigwig_ctrl,
                 output_bins=config.output_bins,
                 atac_hgp_map=config.atac_hgp_map,
+                skip_missing_hist=config.skip_missing_hist,
                 add_revcomp=False,
                 return_coords=False,
                 shuffle_at_epoch_start=False, 
@@ -289,6 +292,7 @@ class DataModule(L.LightningDataModule):
             cts_ctrl_bw_file=self.config.bigwig_ctrl,
             output_bins=self.config.output_bins,
             atac_hgp_map=self.config.atac_hgp_map,
+            skip_missing_hist=self.config.skip_missing_hist,
             add_revcomp=False,
             return_coords=False,
             shuffle_at_epoch_start=False,
@@ -539,6 +543,7 @@ class HistoBPNetDatasetV2(ChromBPNetDataset):
         cts_ctrl_bw_file=None,
         output_bins="",
         atac_hgp_map="",
+        skip_missing_hist=False,
         add_revcomp=False, 
         return_coords=False,    
         shuffle_at_epoch_start=False, 
@@ -563,8 +568,9 @@ class HistoBPNetDatasetV2(ChromBPNetDataset):
         self.nonpeak_seqs, self.nonpeak_cts, self.nonpeak_cts_ctrl, self.nonpeak_coords = load_data(
             peak_regions, nonpeak_regions, genome_fasta, cts_bw_file,
             inputlen, outputlen, max_jitter,
+            cts_ctrl_bw_file=cts_ctrl_bw_file, output_bins=output_bins, atac_hgp_df=atac_hgp_df,
             # TODO_later maybe make get_total_cts an arg
-            cts_ctrl_bw_file=cts_ctrl_bw_file, output_bins=output_bins, atac_hgp_df=atac_hgp_df, get_total_cts=True,
+            get_total_cts=True, skip_missing_hist=skip_missing_hist,
         )
 
         # Store parameters
