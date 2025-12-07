@@ -30,8 +30,8 @@ class DataConfig:
         genome: str = 'hg38',
         in_window: int = 2114,
         out_window: int = 1000,
-        output_bins: str = "",
-        atac_hgp_map: str = "",
+        # output_bins: str = "",
+        atac_hgp_map: str = None,
         skip_missing_hist: bool = False,
         ctrl_scaling_factor: float = 1.0,
         shift: int = 500,
@@ -72,7 +72,7 @@ class DataConfig:
         self.saved_data = saved_data
         self.in_window = in_window
         self.out_window = out_window
-        self.output_bins = output_bins
+        # self.output_bins = output_bins
         self.atac_hgp_map = atac_hgp_map
         self.skip_missing_hist = skip_missing_hist
         self.ctrl_scaling_factor = ctrl_scaling_factor
@@ -86,7 +86,12 @@ class DataConfig:
         self.fold = fold
 
         self.__post_init__()
-        
+
+    def set_additional_args(self, **kwargs):
+        # self.output_bins = output_bins
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+
     @classmethod
     def add_argparse_args(cls, parent_parser: ArgumentParser, **kwargs: Any):
         return add_argparse_args(cls, parent_parser, **kwargs)
@@ -130,12 +135,13 @@ class DataConfig:
             raise ValueError("Output window size must be positive")
         if self.in_window < self.out_window:
             raise ValueError("Input window must be larger than output window")
-        if self.output_bins != "":
-            bins = [int(b.strip()) for b in self.output_bins.split(',')]
-            # if sum(bins) != self.out_window:
-                # raise ValueError("Sum of output bins must equal out_window")
-            if any(b <= 0 for b in bins):
-                raise ValueError("All output bins must be positive integers")
+        # TODO fix
+        # if self.output_bins != "":
+        #     bins = [int(b.strip()) for b in self.output_bins.split(',')]
+        #     # if sum(bins) != self.out_window:
+        #         # raise ValueError("Sum of output bins must equal out_window")
+        #     if any(b <= 0 for b in bins):
+        #         raise ValueError("All output bins must be positive integers")
     
     def _validate_chromosomes(self):
         """Validate chromosome configuration."""

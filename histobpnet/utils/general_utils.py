@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import pyfaidx
 import warnings
 import subprocess
-from .data_utils import dna_to_one_hot
+from toolbox.one_hot import dna_to_one_hot
 
 def is_histone(type_t: str):
     return type_t in ['histobpnet_v1', 'histobpnet_v2']

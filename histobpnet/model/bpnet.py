@@ -57,7 +57,7 @@ class BPNet(torch.nn.Module):
         profile_output_bias: bool = True,
         count_output_bias: bool = True,
         name: str = None,
-        verbose: bool = True,
+        verbose: bool = False,
         n_count_outputs: int = 1,
         for_histone: str = None,
     ):

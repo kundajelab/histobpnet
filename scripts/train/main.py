@@ -6,6 +6,7 @@ import lightning as L
 import torch
 import json
 import time
+import wandb
 from toolbox.utils import get_instance_id, set_random_seed
 from toolbox.logger import SimpleLogger
 from histobpnet.data_loader.data_config import DataConfig
@@ -31,8 +32,6 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
                        help='GPU device IDs to use')
     parser.add_argument('--chrom', type=str, default='test',
                        help='Chromosome type to analyze (e.g., train, val, test, all)')
-    parser.add_argument('--model_type', type=str, default='chrombpnet',
-                       help='Type of model to use')
     # to load a "full" chrombpnet provide chrombpnet_wo_bias for checkpoint and bias_scaled
     parser.add_argument('--checkpoint', '-c', type=str, default=None,
                        help='Path to model checkpoint')
@@ -48,9 +47,15 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument('--alpha', type=float, default=1,
                         help='Weight for count loss (profile loss will be weighted as 1-alpha).')
     parser.add_argument("--cvd", dest="cvd", default=None, help="Value to set for CUDA_VISIBLE_DEVICES")
+    parser.add_argument('--lr', type=float, default=0.001,
+                        help='Learning rate')
+    parser.add_argument('--optimizer_eps', type=float, default=1e-7,
+                        help='Adam optimizer epsilon value')
+    parser.add_argument('--skip_wandb', action='store_true',
+                        help='Do not use Weights & Biases logger')
     
     # Add model-specific arguments
-    # TODO currently cant have all of these together, find a way to fix later
+    # TODO_later do something better about this..
     # ChromBPNetConfig.add_argparse_args(parser)
     # HistoBPNetConfigV1.add_argparse_args(parser)
     HistoBPNetConfigV2.add_argparse_args(parser)
@@ -59,6 +64,10 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     DataConfig.add_argparse_args(parser)
 
 def get_parsers():
+    # This tells Python: "If I add an argument that already exists, just overwrite the old one with this new one and don't crash."
+    # TODO_Later actually manage the horrible config / arg situation better
+    # parser = argparse.ArgumentParser(conflict_handler='resolve')
+    #
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest='command', required=True)
 
@@ -70,14 +79,8 @@ def get_parsers():
                             help='Training precision (16, 32, or 64)')
     train_parser.add_argument('--gradient_clip', type=float, default=None,
                             help='Gradient clipping value')
-    train_parser.add_argument('--skip_wandb', action='store_true',
-                            help='Do not use Weights & Biases logger')
     train_parser.add_argument('--adjust_bias', action='store_true',
-                              help='Adjust bias model')
-    train_parser.add_argument('--lr', type=float, default=0.001,
-                              help='Learning rate')
-    train_parser.add_argument('--optimizer_eps', type=float, default=1e-7,
-                              help='Adam optimizer epsilon value')
+                            help='Adjust bias model')
     add_common_args(train_parser)
 
     # predict sub-command
@@ -90,14 +93,6 @@ def get_parsers():
     interpret_parser.add_argument('--shap', type=str, default='counts',
                                    help='Type of SHAP analysis')
     add_common_args(interpret_parser)
-
-    # finetune sub-command
-    finetune_parser = subparsers.add_parser('finetune', help='Finetune the model.')
-    finetune_parser.add_argument('--adjust_bias', action='store_true',
-                                help='Adjust bias model')
-    finetune_parser.add_argument('--gradient_clip', type=float, default=None,
-                                help='Gradient clipping value')
-    add_common_args(finetune_parser)
 
     return parser
 
@@ -113,6 +108,12 @@ def setup(instance_id: str):
     # set up instance_id and output directory
     output_dir = os.path.join(args.output_dir, instance_id)
     os.makedirs(output_dir, exist_ok=False)
+
+    # set up wandb
+    if not args.skip_wandb:
+        # TODO_later make some config to pass into wandb.
+        # config["run_pid"] = os.getpid()
+        wandb.init(project="histobpnet", name=args.name+"|"+instance_id, config=None)
 
     # set up logger
     script_name = os.path.basename(__file__).replace(".py", "")
@@ -135,7 +136,7 @@ def setup(instance_id: str):
     
     return args, output_dir, logger
 
-def train(args, output_dir: str, logger):
+def train(args, pt_output_dir: str, logger):
     assert is_histone(args.model_type), "Train currently only supported for histobpnet"
 
     logger.add_to_log(f"Training with model type: {args.model_type}")
@@ -144,18 +145,12 @@ def train(args, output_dir: str, logger):
     logger.add_to_log(f'n_filters: {args.n_filters}')
 
     data_config = DataConfig.from_argparse_args(args)
-    logger.add_to_log(f'data_type: {data_config.data_type}')
-    logger.add_to_log(f'in_window: {data_config.in_window}') 
-    logger.add_to_log(f'data_dir: {data_config.data_dir}')
-    logger.add_to_log(f'negative_sampling_ratio: {data_config.negative_sampling_ratio}')
-    logger.add_to_log(f'fold: {data_config.fold}')
-    logger.add_to_log(f'batch_size: {data_config.batch_size}')
+    # TODO deal with this mess
+    data_config.set_additional_args(output_bins=args.output_bins)
 
     datamodule = DataModule(data_config, args)
     args.alpha = 1
     model_wrapper = create_model_wrapper(args)
-
-    loggers = [L.pytorch.loggers.CSVLogger(output_dir, name=args.name, version=f'fold_{args.fold}')]
 
     trainer = L.Trainer(
         max_epochs=args.max_epochs,
@@ -177,7 +172,10 @@ def train(args, output_dir: str, logger):
             L.pytorch.callbacks.EarlyStopping(monitor='val_loss', patience=5),
             L.pytorch.callbacks.ModelCheckpoint(monitor='val_loss', save_top_k=1, mode='min', filename='best_model', save_last=True),
         ],
-        logger=loggers,
+        logger=[
+            L.pytorch.loggers.WandbLogger(save_dir=pt_output_dir),
+            L.pytorch.loggers.CSVLogger(pt_output_dir)
+        ],
         fast_dev_run=args.fast_dev_run,
         precision=args.precision,
         gradient_clip_val=args.gradient_clip,
@@ -188,8 +186,8 @@ def train(args, output_dir: str, logger):
         # Even though Lightning’s ModelCheckpoint already saves .ckpt files:
         # .ckpt includes Lightning-specific training state (optimizer, scheduler, etc.)
         # saving just .state_dict() gives a clean PyTorch model that you can load via model.load_state_dict(...)
-        # in a plain nn.Module
-        ckpt_dir = os.path.join(output_dir, "checkpoints")
+        # into a plain nn.Module
+        ckpt_dir = os.path.join(pt_output_dir, "checkpoints")
         os.makedirs(ckpt_dir, exist_ok=False)
         # TODO_later this currently only works for the histobpnet model where I've called the BPNet model bpnet
         # for other models I guess it might make sense to store a list or dict of sub-Modules and then save all
@@ -235,6 +233,7 @@ def predict(args, output_dir: str, model, logger, datamodule=None, mode='predict
 
     if datamodule is None:
         data_config = DataConfig.from_argparse_args(args)
+        data_config.set_additional_args(output_bins=args.output_bins)
         dm = DataModule(data_config, args)
         logger.add_to_log(f'peaks: {data_config.peaks}')
         logger.add_to_log(f'negatives: {data_config.negatives}')
@@ -282,70 +281,15 @@ def interpret(args, args_d, model, datamodule=None):
     # os.makedirs(os.path.join(out_dir, 'interpret'), exist_ok=True)
     # np.save(os.path.join(out_dir, 'interpret', 'mutagenesis.npy'), out)
 
-# TODO review/refactor w/ train
-def finetune(args, logger):
-    data_config = DataConfig.from_argparse_args(args)
-    loggers=[L.pytorch.loggers.CSVLogger(args.out_dir, name=args.name, version=f'fold_{args.fold}')]
-    out_dir = os.path.join(args.out_dir, args.name, 'finetune', f'fold_{args.fold}')
-    os.makedirs(out_dir, exist_ok=True)
-
-    if os.path.exists(os.path.join(out_dir, 'checkpoints/best_model.ckpt')) and not args.force:
-        raise ValueError(f"Model folder {out_dir}/checkpoints/best_model.ckpt already exists. Please delete the existing model or specify a new version.")
-    if args.bias_scaled is None:
-        args.bias_scaled = os.path.join(args.data_dir, 'bias_scaled.h5')
-    logger.add_to_log(f'out_dir: {out_dir}')
-    logger.add_to_log(f'bias: {args.bias_scaled}')      
-    logger.add_to_log(f'adjust_bias: {args.adjust_bias}')
-    logger.add_to_log(f'data_type: {data_config.data_type}')
-    logger.add_to_log(f'in_window: {data_config.in_window}') 
-    logger.add_to_log(f'data_dir: {data_config.data_dir}')
-    logger.add_to_log(f'negative_sampling_ratio: {data_config.negative_sampling_ratio}')
-    logger.add_to_log(f'fold: {args.fold}')
-    logger.add_to_log(f'n_filters: {args.n_filters}')
-    logger.add_to_log(f'batch_size: {data_config.batch_size}')
-    logger.add_to_log(f'precision: {args.precision}')
-
-    datamodule = DataModule(data_config)
-
-    args.alpha = datamodule.median_count / 10
-    logger.add_to_log(f'alpha: {args.alpha}')
-
-    model = load_model(args)
-    if args.adjust_bias:
-        adjust_bias_model_logcounts(model.model.bias, datamodule.negative_dataloader())
-
-    trainer = L.Trainer(
-        max_epochs=args.max_epochs,
-        reload_dataloaders_every_n_epochs=1,
-        check_val_every_n_epoch=1, # 5
-        accelerator='gpu',
-        devices=args.gpu,
-        val_check_interval=None,
-        strategy=DDPStrategy(find_unused_parameters=True),
-        callbacks=[
-            L.pytorch.callbacks.EarlyStopping(monitor='val_loss', patience=5),
-            L.pytorch.callbacks.ModelCheckpoint(monitor='val_loss', save_top_k=1, mode='min', filename='best_model', save_last=True),
-        ],
-        logger=loggers, # L.pytorch.loggers.TensorBoardLogger
-        fast_dev_run=args.fast_dev_run,
-        precision=args.precision,
-        gradient_clip_val=args.gradient_clip,
-        # precision="bf16"
-    )
-    trainer.fit(model, datamodule)
-    if args.model_type == 'chrombpnet' and not args.fast_dev_run:
-        torch.save(model.model.model.state_dict(), os.path.join(out_dir, 'checkpoints/chrombpnet_wo_bias.pt'))
-
 def main(instance_id: str):
     args, output_dir, logger = setup(instance_id)
 
-    # TODO_later
-    # config["run_pid"] = os.getpid()
-    # wandb.init(project="expression-models", name=config["run_name"]+"|"+instance_id, config=config)
+    pt_output_dir = os.path.join(output_dir, "pt_artifacts")
+    os.makedirs(pt_output_dir, exist_ok=False)
 
     if args.command == 'train':
         assert is_histone(args.model_type), "Train currently only supported for histobpnet"
-        train(args, output_dir, logger)
+        train(args, pt_output_dir, logger)
         model = load_model(args, output_dir)
         predict(args, model)
     elif args.command == 'predict':
@@ -354,10 +298,6 @@ def main(instance_id: str):
     elif args.command == 'interpret':
         model = load_model(args, output_dir)
         interpret(args, model)
-    elif args.command == 'finetune':
-        finetune(args, logger)
-        model = load_model(args, output_dir)
-        predict(args, output_dir, model, logger)
     else:
         raise ValueError(f"Unknown command: {args.command}")
 

@@ -257,36 +257,34 @@ def get_seq_cts_coords(
     atac_hgp_df=None,
     get_total_cts: bool = False,
     skip_missing_hist: bool = False,
+    mode: str = "train",
 ):
     # TODO_later remove this after im done debugging
-    # peaks_str = "peaks" if peaks_bool==1 else "nonpeaks"
+    peaks_str = "peaks" if peaks_bool==1 else "nonpeaks"
 
-    # temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/train/seqs_{peaks_str}.npy"
-    # if not os.path.isfile(temp_p):
-    #     seq = get_seq(peaks_df, genome, input_width)
-    #     np.save(temp_p, seq)
-    # else:
-    #     seq = np.load(temp_p)
-    seq = get_seq(peaks_df, genome, input_width)
+    temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/train/seqs_{mode}_{peaks_str}.npy"
+    if not os.path.isfile(temp_p):
+        seq = get_seq(peaks_df, genome, input_width)
+        np.save(temp_p, seq)
+    else:
+        seq = np.load(temp_p)
 
-    # temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/train/cts_{peaks_str}_fast.npy"
-    # if not os.path.isfile(temp_p):
-    #     cts = get_cts(peaks_df, bw, output_width, atac_hgp_df=atac_hgp_df, get_total_cts=get_total_cts)
-    #     np.save(temp_p, cts)
-    # else:
-    #     cts = np.load(temp_p)
-    cts = get_cts(peaks_df, bw, output_width, atac_hgp_df=atac_hgp_df, get_total_cts=get_total_cts, skip_missing_hist=skip_missing_hist)
+    temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/cts_{mode}_{peaks_str}_fast.npy"
+    if not os.path.isfile(temp_p):
+        cts = get_cts(peaks_df, bw, output_width, atac_hgp_df=atac_hgp_df, get_total_cts=get_total_cts, skip_missing_hist=skip_missing_hist)
+        np.save(temp_p, cts)
+    else:
+        cts = np.load(temp_p)
 
     if bw_ctrl is None:
         cts_ctrl = None
     else:
-        # temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/train/cts_ctrl_{peaks_str}_fast.npy"
-        # if not os.path.isfile(temp_p):
-        #     cts_ctrl = get_cts(peaks_df, bw_ctrl, output_width, atac_hgp_df=atac_hgp_df, get_total_cts=get_total_cts)
-        #     np.save(temp_p, cts_ctrl)
-        # else:
-        #     cts_ctrl = np.load(temp_p)
-        cts_ctrl = get_cts(peaks_df, bw_ctrl, output_width, atac_hgp_df=atac_hgp_df, get_total_cts=get_total_cts, skip_missing_hist=skip_missing_hist)
+        temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/cts_ctrl_{mode}_{peaks_str}_fast.npy"
+        if not os.path.isfile(temp_p):
+            cts_ctrl = get_cts(peaks_df, bw_ctrl, output_width, atac_hgp_df=atac_hgp_df, get_total_cts=get_total_cts, skip_missing_hist=skip_missing_hist)
+            np.save(temp_p, cts_ctrl)
+        else:
+            cts_ctrl = np.load(temp_p)
 
     coords = get_coords(peaks_df, peaks_bool)
     return seq, cts, cts_ctrl, coords
@@ -304,6 +302,7 @@ def load_data(
     atac_hgp_df = None,
     get_total_cts = False,
     skip_missing_hist = False,
+    mode: str = "train",
 ):
     """
     Load sequences and corresponding base resolution counts for training, 
@@ -318,7 +317,7 @@ def load_data(
     cts_ctrl_bw = pyBigWig.open(cts_ctrl_bw_file) if cts_ctrl_bw_file is not None else None
     genome = pyfaidx.Fasta(genome_fasta)
 
-    if output_bins != "":
+    if output_bins is not None:
         output_bins = [int(x) for x in output_bins.split(",")]
         output_len = max(output_bins)
         output_len_neg = output_len
@@ -355,6 +354,7 @@ def load_data(
             atac_hgp_df=atac_hgp_df,
             get_total_cts=get_total_cts,
             skip_missing_hist=skip_missing_hist,
+            mode=mode,
         )
     
     if nonpeak_regions is not None:
@@ -371,6 +371,7 @@ def load_data(
             peaks_bool=0,
             get_total_cts=get_total_cts,
             skip_missing_hist=skip_missing_hist,
+            mode=mode,
         )
 
     cts_bw.close()
@@ -738,6 +739,7 @@ def crop_revcomp_data(
             seqs = np.vstack([cropped_peaks, sampled_nonpeak_seqs])
             coords = np.vstack([cropped_coords, sampled_nonpeak_coords])
             cts = np.vstack([cropped_cnts, sampled_nonpeak_cts])
+            peak_status = np.array([1]*len(cropped_peaks) + [0]*len(sampled_nonpeak_seqs)).reshape(-1,1)
         else:
             seqs = np.vstack([cropped_peaks, nonpeak_seqs])
             coords = np.vstack([cropped_coords, nonpeak_coords])
@@ -751,6 +753,7 @@ def crop_revcomp_data(
                 for w in output_bins:
                     cts[w] = np.vstack([cropped_cnts[w], per_bin_nonpeak_cts_dict[w]])
                     cts_ctrl[w] = np.vstack([cropped_cnts_ctrl[w], per_bin_nonpeak_cts_ctrl_dict[w]])
+            peak_status = np.array([1]*len(cropped_peaks) + [0]*len(nonpeak_seqs)).reshape(-1,1)
     elif peak_seqs is not None:
         # Only peak data
         cropped_peaks, cropped_cnts, cropped_cnts_ctrl, cropped_coords = crop_peak_data()
@@ -758,12 +761,14 @@ def crop_revcomp_data(
         coords = cropped_coords
         cts = cropped_cnts
         cts_ctrl = cropped_cnts_ctrl
+        peak_status = np.array([1]*len(cropped_peaks)).reshape(-1,1)
     elif nonpeak_seqs is not None:
         # Only non-peak data
         seqs = nonpeak_seqs
         coords = nonpeak_coords
         cts = nonpeak_cts if output_bins is None else per_bin_nonpeak_cts_dict
         cts_ctrl = nonpeak_cts_ctrl if output_bins is None else per_bin_nonpeak_cts_ctrl_dict
+        peak_status = np.array([0]*len(nonpeak_seqs)).reshape(-1,1)
     else:
         raise ValueError("Both peak and non-peak arrays are empty")
 
@@ -775,4 +780,4 @@ def crop_revcomp_data(
             add_revcomp, shuffle=shuffle, rc_frac=rc_frac
         )
 
-    return seqs, cts, cts_ctrl, coords
+    return seqs, cts, cts_ctrl, coords, peak_status

@@ -7,6 +7,10 @@ from lightning.pytorch.utilities.types import STEP_OUTPUT
 import numpy as np
 from tqdm import tqdm
 import os
+from toolbox.plt_utils import density_scatter
+from lightning.pytorch.loggers import WandbLogger
+import wandb
+import matplotlib.pyplot as plt
 
 from histobpnet.model.bpnet import BPNet
 from histobpnet.model.chrombpnet import ChromBPNet
@@ -114,10 +118,10 @@ class ModelWrapper(LightningModule):
 
         # Initialize metrics storage
         self.metrics = {
-            'train': {'preds': [], 'targets': []},
-            'val': {'preds': [], 'targets': []},
-            'test': {'preds': [], 'targets': []},
-            'predict': {'preds': [], 'targets': []}
+            'train': {'preds': [], 'targets': [], 'peak_status': []},
+            'val': {'preds': [], 'targets': [], 'peak_status': []},
+            'test': {'preds': [], 'targets': [], 'peak_status': []},
+            'predict': {'preds': [], 'targets': [], 'peak_status': []}
         }
 
         for k, v in kwargs.items():
@@ -223,11 +227,32 @@ class ModelWrapper(LightningModule):
         # Concatenate predictions and targets across batches
         all_preds = torch.cat(self.metrics[mode]['preds'])
         all_targets = torch.cat(self.metrics[mode]['targets'])
+        all_peak_status = torch.cat(self.metrics[mode]['peak_status'])
         
         if self.model_type != "histobpnet_v1":
             # Calculate and log correlation
             pr = pearson_corr(all_preds.reshape(-1), all_targets.reshape(-1), eps=0)
             self.log(f"{mode}_count_pearson", pr, prog_bar=True, logger=True, sync_dist=True)
+
+            at, ap, aps = all_targets.detach().cpu().numpy(), all_preds.detach().cpu().numpy(), all_peak_status.detach().cpu().numpy()
+            fig, axes = plt.subplots(1, 3, figsize=(30, 5))
+            for i, ax in enumerate(axes):
+                x = at if i == 0 else at[np.where(aps == 1)[0]] if i == 1 else at[np.where(aps == 0)[0]]
+                y = ap if i == 0 else ap[np.where(aps == 1)[0]] if i == 1 else ap[np.where(aps == 0)[0]]
+                suffix = "(All)" if i == 0 else "(Peaks)" if i == 1 else "(Non-peaks)"
+                if len(x) == 0:
+                    continue
+                _, _, _, _, _ = density_scatter(
+                    x,
+                    y,
+                    "Log Count Labels " + suffix,
+                    "Log Count Predictions " + suffix,
+                    s=5,
+                    bins=200,
+                    incl_stats=True,
+                    ax=ax,
+                )
+            self._log_plot(fig, name=f"{mode}_scatter")
         else:
             # Calculate and log correlation per bin
             assert all_preds.shape[1] == len(self.model.output_bins), "Mismatch between number of output bins and predictions"
@@ -235,10 +260,12 @@ class ModelWrapper(LightningModule):
                 pr = pearson_corr(all_preds[:, i].reshape(-1), all_targets[:, i].reshape(-1), eps=0)
                 bin_size = str(self.model.output_bins[i])
                 self.log(f"{mode}_count_pearson_{bin_size}bp", pr, prog_bar=True, logger=True, sync_dist=True)
+                # TODO plot scatterplots..
 
         # Reset metrics storage
         self.metrics[mode]['preds'] = []
         self.metrics[mode]['targets'] = []
+        self.metrics[mode]['peak_status'] = []
     
     def on_train_epoch_end(self) -> None:
         """Handle end of training epoch."""
@@ -252,6 +279,25 @@ class ModelWrapper(LightningModule):
         """Handle end of test epoch."""
         self._epoch_end('test')
     
+    def _log_plot(self, fig, name: str, close_fig: bool = True):
+        # Iterate through loggers to find WandB
+        wandb_logger = None
+        if isinstance(self.logger, WandbLogger):
+            wandb_logger = self.logger
+        elif hasattr(self.logger, 'experiment') and hasattr(self.logger.experiment, 'log'):
+            # Fallback for single logger that might be WandB
+            wandb_logger = self.logger
+        elif hasattr(self.logger, 'loggers'):
+            # Handle LoggerCollection (multiple loggers)
+            for logger in self.logger.loggers:
+                if isinstance(logger, WandbLogger):
+                    wandb_logger = logger
+                    break
+        if wandb_logger:
+            wandb_logger.experiment.log({name: wandb.Image(fig)})
+            if close_fig:
+                plt.close(fig)
+
 class BPNetWrapper(ModelWrapper):
     """Wrapper for BPNet model with specific configurations and loss functions.
     
@@ -299,6 +345,7 @@ class BPNetWrapper(ModelWrapper):
 
         self.metrics[mode]['preds'].append(y_count)
         self.metrics[mode]['targets'].append(true_counts)
+        self.metrics[mode]['peak_status'].append(batch['peak_status'])
         with torch.no_grad():
             profile_pearson = pearson_corr(y_profile.softmax(-1), true_profile).mean()
             self.log_dict(
@@ -338,7 +385,7 @@ class BPNetWrapper(ModelWrapper):
 
         return y_profile.cpu().numpy(), y_count.cpu().numpy()
     
-class ChromBPNetWrapper(ModelWrapper):
+class ChromBPNetWrapper(BPNetWrapper):
     """Wrapper for ChromBPNet model with specific configurations and loss functions.
     
     This wrapper extends the base ModelWrapper to handle ChromBPNet-specific features
@@ -398,6 +445,7 @@ class HistoBPNetWrapperV1(ModelWrapper):
 
         self.metrics[mode]['preds'].append(y_count)
         self.metrics[mode]['targets'].append(true_binned_logsum)
+        self.metrics[mode]['peak_status'].append(batch['peak_status'])
 
         # TODO_NOW does mse in log space make sense? that's what bpnet does though (see def _step)
         mse_elements = (y_count - true_binned_logsum) ** 2     # shape: (batch_size, n_bins)
@@ -483,6 +531,7 @@ class HistoBPNetWrapperV2(ModelWrapper):
 
         self.metrics[mode]['preds'].append(y_count)
         self.metrics[mode]['targets'].append(true_logsum)
+        self.metrics[mode]['peak_status'].append(batch['peak_status'])
 
         # TODO does mse in log space make sense? that's what bpnet does though (see def _step)
         mse_elements = (y_count - true_logsum) ** 2     # shape: (batch_size, 1)
