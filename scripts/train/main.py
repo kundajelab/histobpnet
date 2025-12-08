@@ -87,9 +87,9 @@ def setup(instance_id: str):
 
     # set up wandb
     if not args.skip_wandb:
-        # TODO_later make some config to pass into wandb.
-        # config["run_pid"] = os.getpid()
-        wandb.init(project="histobpnet", name=args.name+"|"+instance_id, config=None)
+        run_config = vars(args)
+        run_config["run_pid"] = os.getpid()
+        wandb.init(project="histobpnet", name=args.name+"|"+instance_id, config=run_config)
 
     # set up logger
     script_name = os.path.basename(__file__).replace(".py", "")

@@ -157,6 +157,7 @@ class DataModule(L.LightningDataModule):
                 shuffle_at_epoch_start=False,
                 rc_frac=config.rc_frac,
                 mode='train',
+                ctrl_scaling_factor=config.ctrl_scaling_factor,
             )
             self.val_dataset = self.dataset_class(
                 peak_regions=val_peaks,
@@ -176,6 +177,7 @@ class DataModule(L.LightningDataModule):
                 shuffle_at_epoch_start=False, 
                 rc_frac=config.rc_frac,
                 mode='val',
+                ctrl_scaling_factor=config.ctrl_scaling_factor,
             )
         elif stage == 'test':
             test_peaks, test_nonpeaks = split_peak_and_nonpeak(self.test_data)
@@ -197,6 +199,7 @@ class DataModule(L.LightningDataModule):
                 shuffle_at_epoch_start=False, 
                 rc_frac=config.rc_frac,
                 mode='test',
+                ctrl_scaling_factor=config.ctrl_scaling_factor,
             )
 
         print(f'Data setup complete in {time() - t0:.2f} seconds')
@@ -306,6 +309,7 @@ class DataModule(L.LightningDataModule):
             debug=self.config.debug,
             rc_frac=self.config.rc_frac,
             mode='chrom',
+            ctrl_scaling_factor=self.config.ctrl_scaling_factor,
         )
         return dataset
 
@@ -568,6 +572,7 @@ class HistoBPNetDatasetV2(ChromBPNetDataset):
         rc_frac=0.5,
         debug=False,
         mode: str = "train",
+        ctrl_scaling_factor: float = 1.0,
         **kwargs
     ):
         assert max_jitter == 0
@@ -593,6 +598,7 @@ class HistoBPNetDatasetV2(ChromBPNetDataset):
             # TODO_later maybe make get_total_cts an arg
             get_total_cts=True, skip_missing_hist=skip_missing_hist,
             mode=mode,
+            ctrl_scaling_factor=ctrl_scaling_factor,
         )
 
         # Store parameters

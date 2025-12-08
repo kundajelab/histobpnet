@@ -158,7 +158,15 @@ def split_peak_and_nonpeak(data):
     peaks = data[data['is_peak']].copy()
     return peaks, non_peaks
 
-def get_cts(peaks_df, bw, width, atac_hgp_df=None, get_total_cts: bool = False, skip_missing_hist: bool = False):
+def get_cts(
+    peaks_df,
+    bw,
+    width,
+    atac_hgp_df=None,
+    get_total_cts: bool = False,
+    skip_missing_hist: bool = False,
+    ctrl_scaling_factor: float = 1.0,
+):
     """
     Fetches values from a bigwig bw, given a df with minimally
     chr, start and summit columns. Summit is relative to start.
@@ -197,6 +205,7 @@ def get_cts(peaks_df, bw, width, atac_hgp_df=None, get_total_cts: bool = False, 
                     vals.append(np.zeros(width))
             else:
                 if not get_total_cts:
+                    assert ctrl_scaling_factor == 1.0, "Not yet implemented...."
                     raw = bw.values(r.hist_chrom, r.hist_start, r.hist_end)
                     # pad to width w/ 0
                     padded = np.zeros(width, dtype=float)
@@ -205,11 +214,12 @@ def get_cts(peaks_df, bw, width, atac_hgp_df=None, get_total_cts: bool = False, 
                     vals.append(np.nan_to_num(padded))
                 else:
                     vals.append(np.array([
-                        np.nansum(bw.values(r.hist_chrom, r.hist_start, r.hist_end))
+                        ctrl_scaling_factor * np.nansum(bw.values(r.hist_chrom, r.hist_start, r.hist_end))
                     ]))
     else:
         for _, r in peaks_df.iterrows():
             if not get_total_cts:
+                assert ctrl_scaling_factor == 1.0, "Not yet implemented...."
                 vals.append(
                     np.nan_to_num(bw.values(r['chr'],
                                             r['start'] + r['summit'] - width//2,
@@ -217,9 +227,9 @@ def get_cts(peaks_df, bw, width, atac_hgp_df=None, get_total_cts: bool = False, 
                 )
             else:
                 vals.append(np.array([
-                    np.nansum(bw.values(r['chr'],
-                                        r['start'] + r['summit'] - width//2,
-                                        r['start'] + r['summit'] + width//2))
+                    ctrl_scaling_factor * np.nansum(bw.values(r['chr'],
+                                                            r['start'] + r['summit'] - width//2,
+                                                            r['start'] + r['summit'] + width//2))
                 ]))
 
     return np.array(vals)
@@ -258,20 +268,30 @@ def get_seq_cts_coords(
     get_total_cts: bool = False,
     skip_missing_hist: bool = False,
     mode: str = "",
+    ctrl_scaling_factor: float = 1.0,
 ):
     # TODO_later remove this after im done debugging
     peaks_str = "peaks" if peaks_bool==1 else "nonpeaks"
 
-    temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/train/seqs_{mode}_{peaks_str}.npy"
+    temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/seqs_{mode}_{peaks_str}.npy"
     if not os.path.isfile(temp_p):
         seq = get_seq(peaks_df, genome, input_width)
         np.save(temp_p, seq)
     else:
         seq = np.load(temp_p)
 
-    temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/cts_{mode}_{peaks_str}_fast.npy"
+    file_name = f"cts_{mode}_{peaks_str}_{str(ctrl_scaling_factor)}_fast.npy" if ctrl_scaling_factor != 1.0 else f"cts_{mode}_{peaks_str}_fast.npy"
+    temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/{file_name}"
     if not os.path.isfile(temp_p):
-        cts = get_cts(peaks_df, bw, output_width, atac_hgp_df=atac_hgp_df, get_total_cts=get_total_cts, skip_missing_hist=skip_missing_hist)
+        cts = get_cts(
+            peaks_df,
+            bw,
+            output_width,
+            atac_hgp_df=atac_hgp_df,
+            get_total_cts=get_total_cts,
+            skip_missing_hist=skip_missing_hist,
+            ctrl_scaling_factor=ctrl_scaling_factor,
+        )
         np.save(temp_p, cts)
     else:
         cts = np.load(temp_p)
@@ -279,9 +299,18 @@ def get_seq_cts_coords(
     if bw_ctrl is None:
         cts_ctrl = None
     else:
-        temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/cts_ctrl_{mode}_{peaks_str}_fast.npy"
+        file_name = f"cts_ctrl_{mode}_{peaks_str}_{str(ctrl_scaling_factor)}_fast.npy" if ctrl_scaling_factor != 1.0 else f"cts_ctrl_{mode}_{peaks_str}_fast.npy"
+        temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/{file_name}"
         if not os.path.isfile(temp_p):
-            cts_ctrl = get_cts(peaks_df, bw_ctrl, output_width, atac_hgp_df=atac_hgp_df, get_total_cts=get_total_cts, skip_missing_hist=skip_missing_hist)
+            cts_ctrl = get_cts(
+                peaks_df,
+                bw_ctrl,
+                output_width,
+                atac_hgp_df=atac_hgp_df,
+                get_total_cts=get_total_cts,
+                skip_missing_hist=skip_missing_hist,
+                ctrl_scaling_factor=ctrl_scaling_factor,
+            )
             np.save(temp_p, cts_ctrl)
         else:
             cts_ctrl = np.load(temp_p)
@@ -303,6 +332,7 @@ def load_data(
     get_total_cts = False,
     skip_missing_hist = False,
     mode: str = "",
+    ctrl_scaling_factor: float = 1.0,
 ):
     """
     Load sequences and corresponding base resolution counts for training, 
@@ -355,6 +385,7 @@ def load_data(
             get_total_cts=get_total_cts,
             skip_missing_hist=skip_missing_hist,
             mode=mode,
+            ctrl_scaling_factor=ctrl_scaling_factor,
         )
     
     if nonpeak_regions is not None:
@@ -372,6 +403,7 @@ def load_data(
             get_total_cts=get_total_cts,
             skip_missing_hist=skip_missing_hist,
             mode=mode,
+            ctrl_scaling_factor=ctrl_scaling_factor,
         )
 
     cts_bw.close()
