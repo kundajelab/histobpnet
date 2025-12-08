@@ -9,12 +9,15 @@ import time
 import wandb
 from toolbox.utils import get_instance_id, set_random_seed
 from toolbox.logger import SimpleLogger
+
 from histobpnet.data_loader.data_config import DataConfig
 from histobpnet.model.model_config import BPNetModelConfig
-from histobpnet.model.model_wrappers import create_model_wrapper, load_model
 from histobpnet.data_loader.dataset import DataModule
 from histobpnet.eval.metrics import compare_with_observed, save_predictions, load_output_to_regions
 from histobpnet.utils.general_utils import is_histone
+from histobpnet.model.bpnet_wrapper import BPNetWrapper, ChromBPNetWrapper
+from histobpnet.model.histobpnet_wrapper_v1 import HistoBPNetWrapperV1
+from histobpnet.model.histobpnet_wrapper_v2 import HistoBPNetWrapperV2
 
 def get_parsers():
     parser = argparse.ArgumentParser()
@@ -31,15 +34,13 @@ def get_parsers():
                        help='GPU device IDs to use')
     parser.add_argument('--chrom', type=str, default='test',
                        help='Chromosome type to analyze (e.g., train, val, test, all)')
-    # to load a "full" chrombpnet provide chrombpnet_wo_bias for checkpoint and bias_scaled
-    parser.add_argument('--checkpoint', '-c', type=str, default=None,
-                       help='Path to model checkpoint')
     # what s bias_scaled as opposed to regular bias model? -> see https://github.com/kundajelab/chrombpnet/wiki/Output-format
     parser.add_argument('--bias_scaled', type=str, default=None,
                        help='Path to bias scaled model')
-    # this is only used for training (and I think fine-tuning), TODO_later move it to their respective subparsers
     parser.add_argument('--chrombpnet_wo_bias', type=str, default=None,
                        help='ChromBPNet model without bias')
+    parser.add_argument('--checkpoint', type=str, default=None,
+                       help='Path to model checkpoint (.ckpt) for prediction/interpretation')
     parser.add_argument('--verbose', action='store_true',
                        help='Verbose output')
     # TODO_later: is this actually used anywhere?
@@ -111,16 +112,19 @@ def setup(instance_id: str):
     
     return args, output_dir, logger
 
-def train(args, pt_output_dir: str, logger):
+def train(args, output_dir: str, logger):
     assert is_histone(args.model_type), "Train currently only supported for histobpnet"
     logger.add_to_log(f"Training with model type: {args.model_type}")
 
     data_config = DataConfig.from_argparse_args(args)
-    data_config.set_output_bins(args.output_bins)
+    data_config.set_additional_args(args.output_bins, args.model_type)
 
     datamodule = DataModule(data_config, len(args.gpu))
     args.alpha = 1
     model_wrapper = create_model_wrapper(args)
+
+    pt_output_dir = os.path.join(output_dir, "pt_artifacts")
+    os.makedirs(pt_output_dir, exist_ok=False)
 
     trainer = L.Trainer(
         max_epochs=args.max_epochs,
@@ -157,12 +161,15 @@ def train(args, pt_output_dir: str, logger):
         # .ckpt includes Lightning-specific training state (optimizer, scheduler, etc.)
         # saving just .state_dict() gives a clean PyTorch model that you can load via model.load_state_dict(...)
         # into a plain nn.Module
-        ckpt_dir = os.path.join(pt_output_dir, "checkpoints")
+        ckpt_dir = os.path.join(output_dir, "checkpoints")
         os.makedirs(ckpt_dir, exist_ok=False)
         # TODO_later this currently only works for the histobpnet model where I've called the BPNet model bpnet
         # for other models I guess it might make sense to store a list or dict of sub-Modules and then save all
         # those here?
         torch.save(model_wrapper.model.bpnet.state_dict(), os.path.join(ckpt_dir, f'{args.model_type}.pt'))
+
+    # return the path to the best_model.ckpt
+    return os.path.join(trainer.checkpoint_callback.dirpath, 'best_model.ckpt')
 
 def predict(args, output_dir: str, model, logger, datamodule=None, mode='predict'):
     trainer = L.Trainer(logger=False, accelerator='gpu', fast_dev_run=args.fast_dev_run, devices=args.gpu, val_check_interval=None)
@@ -186,7 +193,7 @@ def predict(args, output_dir: str, model, logger, datamodule=None, mode='predict
 
     if datamodule is None:
         data_config = DataConfig.from_argparse_args(args)
-        data_config.set_additional_args(output_bins=args.output_bins)
+        data_config.set_additional_args(output_bins=args.output_bins, model_type=args.model_type)
         dm = DataModule(data_config, len(args.gpu))
     else:
         dm = datamodule
@@ -229,22 +236,49 @@ def interpret(args, args_d, model, datamodule=None):
     # os.makedirs(os.path.join(out_dir, 'interpret'), exist_ok=True)
     # np.save(os.path.join(out_dir, 'interpret', 'mutagenesis.npy'), out)
 
+def create_model_wrapper(args, checkpoint: str = None):
+    """Factory function to create appropriate model wrapper.
+    """
+    model_type = args.model_type.lower()
+    if model_type == 'bpnet':
+        assert checkpoint is None
+        return BPNetWrapper(args)
+    elif model_type == 'chrombpnet':
+        if checkpoint is not None:
+            assert checkpoint.endswith('.ckpt')
+            return ChromBPNetWrapper.load_from_checkpoint(checkpoint, map_location='cpu')
+        model_wrapper = ChromBPNetWrapper(args)
+        model_wrapper.load_pretrained_chrombpnet(args.bias_scaled, args.chrombpnet_wo_bias)
+    elif model_type == 'histobpnet_v1':
+        if checkpoint is not None:
+            assert checkpoint.endswith('.ckpt')
+            return HistoBPNetWrapperV1.load_from_checkpoint(checkpoint, map_location='cpu')
+        model_wrapper = HistoBPNetWrapperV1(args)
+        model_wrapper.load_pretrained_chrombpnet(args.chrombpnet_wo_bias)
+    elif model_type == 'histobpnet_v2':
+        if checkpoint is not None:
+            assert checkpoint.endswith('.ckpt')
+            return HistoBPNetWrapperV2.load_from_checkpoint(checkpoint, map_location='cpu')
+        model_wrapper = HistoBPNetWrapperV2(args)
+        model_wrapper.load_pretrained_chrombpnet(args.chrombpnet_wo_bias)
+    else:
+        raise ValueError(f"Unknown model type: {model_type}") 
+
+    return model_wrapper
+
 def main(instance_id: str):
     args, output_dir, logger = setup(instance_id)
 
-    pt_output_dir = os.path.join(output_dir, "pt_artifacts")
-    os.makedirs(pt_output_dir, exist_ok=False)
-
     if args.command == 'train':
         assert is_histone(args.model_type), "Train currently only supported for histobpnet"
-        train(args, pt_output_dir, logger)
-        model = load_model(args, output_dir)
-        predict(args, model)
+        best_model_ckpt = train(args, output_dir, logger)
+        model = create_model_wrapper(args, checkpoint=best_model_ckpt)
+        predict(args, output_dir, model, logger)
     elif args.command == 'predict':
-        model = load_model(args, output_dir)
+        model = create_model_wrapper(args, checkpoint=args.checkpoint)
         predict(args, output_dir, model, logger)
     elif args.command == 'interpret':
-        model = load_model(args, output_dir)
+        model = create_model_wrapper(args, checkpoint=args.checkpoint)
         interpret(args, model)
     else:
         raise ValueError(f"Unknown command: {args.command}")

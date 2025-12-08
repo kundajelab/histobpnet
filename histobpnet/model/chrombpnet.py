@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from histobpnet.model.bpnet import BPNet
+from histobpnet.model.model_config import BPNetModelConfig
 from histobpnet.utils.general_utils import _Log, _Exp
 
 # adapted from BPNet in bpnet-lite, credit goes to Jacob Schreiber <jmschreiber91@gmail.com>
@@ -12,7 +13,7 @@ class ChromBPNet(nn.Module):
 
     def __init__(
         self, 
-        config,
+        config: BPNetModelConfig,
     ):
         super().__init__()
 

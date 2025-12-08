@@ -36,7 +36,6 @@ class DataConfig:
         shift: int = 500,
         rc_frac: float = 0.5,
         outlier_threshold: float = 0.999,
-        data_type: str = 'profile',
         exclude_chroms: List = None,
         batch_size: int = 64,
         num_workers: int = 32,
@@ -77,7 +76,6 @@ class DataConfig:
         self.shift = shift
         self.rc_frac = rc_frac
         self.outlier_threshold = outlier_threshold
-        self.data_type = data_type
         self.batch_size = batch_size 
         self.num_workers = num_workers
         self.debug = debug
@@ -85,18 +83,21 @@ class DataConfig:
 
         self.__post_init__()
 
-    def set_additional_args(self, **kwargs):
-        for k, v in kwargs.items():
-            setattr(self, k, v)
+    # def set_additional_args(self, **kwargs):
+    #     for k, v in kwargs.items():
+    #         setattr(self, k, v)
 
-    # we cannot add output_bins in __init__ because it clashes with an arg of
+    # we cannot add these args in __init__ because it clashes with an arg of
     # the same name in BPNetModelConfig
-    def set_output_bins(self, output_bins: str):
+    def set_additional_args(self, output_bins: str, model_type: str):
         self.output_bins = output_bins
-        if self.output_bins != "":
+        if self.output_bins is not None:
             bins = [int(b.strip()) for b in self.output_bins.split(',')]
             if any(b <= 0 for b in bins):
                 raise ValueError("All output bins must be positive integers")
+
+        self.model_type = model_type
+        self._validate_model_type()
 
     @classmethod
     def add_argparse_args(cls, parent_parser: ArgumentParser, **kwargs: Any):
@@ -113,7 +114,6 @@ class DataConfig:
         self._validate_paths()
         self._validate_windows()
         self._validate_chromosomes()
-        self._validate_data_type()
 
     def _validate_paths(self):
         """Validate that all required files exist."""
@@ -153,7 +153,6 @@ class DataConfig:
         if excluded.intersection(all_chroms) != excluded:
             raise ValueError("Some excluded chromosomes are not in the training/validation/test sets")
     
-    def _validate_data_type(self):
-        """Validate data type parameter."""
-        if self.data_type not in ['profile'] and not is_histone(self.data_type):
-            raise ValueError("Data type must be either 'profile', 'longrange', or 'histobpnet_v*'")
+    def _validate_model_type(self):
+        if self.model_type not in ['profile'] and not is_histone(self.model_type):
+            raise ValueError(f"Unrecognized model_type: {self.model_type}")

@@ -257,7 +257,7 @@ def get_seq_cts_coords(
     atac_hgp_df=None,
     get_total_cts: bool = False,
     skip_missing_hist: bool = False,
-    mode: str = "train",
+    mode: str = "",
 ):
     # TODO_later remove this after im done debugging
     peaks_str = "peaks" if peaks_bool==1 else "nonpeaks"
@@ -302,7 +302,7 @@ def load_data(
     atac_hgp_df = None,
     get_total_cts = False,
     skip_missing_hist = False,
-    mode: str = "train",
+    mode: str = "",
 ):
     """
     Load sequences and corresponding base resolution counts for training, 

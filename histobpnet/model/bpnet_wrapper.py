@@ -125,14 +125,14 @@ class ChromBPNetWrapper(BaseBPNetWrapper):
         self.model = ChromBPNet(config)
         self.model_type = config.model_type
 
-    def load_from_pretrained(self, bias_scaled_path: str = "", chrombpnet_wo_bias_path: str = ""):
+    def load_pretrained_chrombpnet(self, bias_scaled_path: str = None, chrombpnet_wo_bias_path: str = None, instance=None):
         """Load pretrained weights for bias and ChromBPNet without bias.
 
         Args:
             bias_scaled_path: Path to the pretrained bias model
             chrombpnet_wo_bias_path: Path to the pretrained ChromBPNet model without bias
         """
-        if bias_scaled_path != "":
-            self.model.bias = self.init_bias(bias_scaled_path)
-        if chrombpnet_wo_bias_path != "":
-            self.model.model = self.init_chrombpnet_wo_bias(chrombpnet_wo_bias_path, freeze=False)
+        if bias_scaled_path is not None:
+            self.model.bias = self.init_bias(bias_scaled_path, instance=self.model.bias)
+        if chrombpnet_wo_bias_path is not None:
+            self.model.model = self.init_chrombpnet_wo_bias(chrombpnet_wo_bias_path, freeze=False, instance=self.model.model)

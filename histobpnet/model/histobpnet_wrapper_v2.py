@@ -58,8 +58,8 @@ class HistoBPNetWrapperV2(ModelWrapper):
 
         return loss
 
-    def load_from_pretrained(self, chrombpnet_wo_bias_path: str = ""):
-        if chrombpnet_wo_bias_path != "":
+    def load_pretrained_chrombpnet(self, chrombpnet_wo_bias_path: str = None):
+        if chrombpnet_wo_bias_path is not None:
             self.model.bpnet = self.init_chrombpnet_wo_bias(
                 chrombpnet_wo_bias_path,
                 freeze=False, 

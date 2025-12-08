@@ -1,22 +1,16 @@
 from typing import Dict, Any, Union
 import torch
-import torch.nn.functional as F
-import lightning as L
 from lightning import LightningModule
 from lightning.pytorch.utilities.types import STEP_OUTPUT
 import numpy as np
 from tqdm import tqdm
-import os
 from toolbox.plt_utils import density_scatter
 from lightning.pytorch.loggers import WandbLogger
 import wandb
 import matplotlib.pyplot as plt
 
 from histobpnet.model.bpnet import BPNet
-from histobpnet.model.bpnet_wrapper import BPNetWrapper, ChromBPNetWrapper
-from histobpnet.model.histobpnet_wrapper_v1 import HistoBPNetWrapperV1
-from histobpnet.model.histobpnet_wrapper_v2 import HistoBPNetWrapperV2
-from histobpnet.utils.general_utils import pearson_corr, is_histone
+from histobpnet.utils.general_utils import pearson_corr
 
 class ModelWrapper(LightningModule):
     """A generic wrapper for different model architectures to be used with PyTorch Lightning.
@@ -86,9 +80,9 @@ class ModelWrapper(LightningModule):
     def _step(self, batch, batch_idx, mode='train'):
         raise NotImplementedError("Subclasses must implement this method")
 
-    def init_bias(self, bias: str, dataloader=None, verbose=False, device=1):
+    def init_bias(self, bias: str, dataloader=None, verbose=False, device=1, instance=None):
         print(f"Loading bias model from {bias}")
-        bias_model = BPNet.from_keras(bias, name='bias')
+        bias_model = BPNet.from_keras(bias, name='bias', instance=instance)
 
         # Freeze the sub-model
         bias_model.eval()
@@ -103,14 +97,8 @@ class ModelWrapper(LightningModule):
     def init_chrombpnet_wo_bias(self, chrombpnet_wo_bias: str, freeze=True, instance=None):
         print(f"Loading chrombpnet_wo_bias model from {chrombpnet_wo_bias}")
         if chrombpnet_wo_bias.endswith('.h5'):
+            # note: this can only load a chrombpnet_wo_bias, not a full chrombpnet...
             model = BPNet.from_keras(chrombpnet_wo_bias, instance=instance)
-        elif chrombpnet_wo_bias.endswith('.pt'):
-            # n_filters=512 for chrombpnet's accessibility model
-            model = BPNet(n_filters=512, n_layers=8)
-            # TODO why map_location cpu?
-            model.load_state_dict(torch.load(chrombpnet_wo_bias, map_location='cpu'))
-        elif chrombpnet_wo_bias.endswith('.ckpt'):
-            model = BPNet.load_from_checkpoint(chrombpnet_wo_bias)
         else:
             raise ValueError("File format not recognized for chrombpnet_wo_bias")
 
@@ -292,77 +280,3 @@ def adjust_bias_model_logcounts(bias_model, dataloader, verbose=False, device=1)
     if verbose:
         print('### delta', delta, flush=True)
     return bias_model
-
-def create_model_wrapper(
-    args,
-) -> ModelWrapper:
-    """Factory function to create appropriate model wrapper.
-    """
-    model_type = args.model_type.lower()
-    if model_type == 'bpnet':
-        return BPNetWrapper(args)
-    elif model_type == 'chrombpnet':
-        model_wrapper = ChromBPNetWrapper(args)
-        model_wrapper.load_from_pretrained(args.bias_scaled, args.chrombpnet_wo_bias)
-        return model_wrapper
-    elif model_type == 'histobpnet_v1':
-        model_wrapper = HistoBPNetWrapperV1(args)
-        model_wrapper.load_from_pretrained(args.chrombpnet_wo_bias)
-        return model_wrapper
-    elif model_type == 'histobpnet_v2':
-        model_wrapper = HistoBPNetWrapperV2(args)
-        model_wrapper.load_from_pretrained(args.chrombpnet_wo_bias)
-        return model_wrapper
-    else:
-        raise ValueError(f"Unknown model type: {model_type}") 
-
-# STOPPED HERE. go through this and the one below and review/fix
-# also continue to check where else args is passe... starting from main,py...
-def load_pretrained_model(args):
-    model_type = args.model_type.lower()
-    if model_type == 'chrombpnet':
-        checkpoint = args.checkpoint
-        if checkpoint is not None:
-            if checkpoint.endswith('.ckpt'):
-                model_wrapper = ChromBPNetWrapper.load_from_checkpoint(checkpoint, map_location='cpu')
-            elif checkpoint.endswith('.pt'):
-                model_wrapper = ChromBPNetWrapper(args)
-                # TODO why map location is cpu?
-                model_wrapper.model.model.load_state_dict(torch.load(checkpoint, map_location='cpu'))
-            elif checkpoint.endswith('.h5'):
-                model_wrapper = ChromBPNetWrapper(args)
-                # For Keras H5 files, load using the from_keras method
-                # note: this can only load a chrombpnet_wo_bias, not a full chrombpnet...
-                print(f"Loading chrombpnet_wo_bias model from {checkpoint}")
-                model_wrapper.model.model = BPNet.from_keras(checkpoint)
-            else:
-                raise ValueError("No valid checkpoint found")
-
-            # set bias
-            bias_scaled = args.bias_scaled
-            if bias_scaled is None and os.path.exists(os.path.join(args.data_dir, 'bias_scaled.h5')):
-                bias_scaled = os.path.join(args.data_dir, 'bias_scaled.h5')
-            if bias_scaled:
-                print(f"Loading bias model from {bias_scaled}")
-                model_wrapper.model.bias = model_wrapper.init_bias(bias_scaled)
-            else:
-                print(f"No bias model found")
-        else:
-            model_wrapper = ChromBPNetWrapper(args)
-    elif is_histone(model_type):
-        raise NotImplementedError("Loading pretrained HistoBPNet models not implemented yet")
-    else:
-        raise NotImplementedError(f"Loading pretrained models not implemented for model type {model_type}")
-
-    return model_wrapper
-
-def load_model(args, output_dir: str):
-    if args.checkpoint is None:
-        checkpoint = os.path.join(output_dir, 'checkpoints/best_model.ckpt')
-        if not os.path.exists(checkpoint):
-            print(f'No checkpoint found in {output_dir}/checkpoints/best_model.ckpt')
-        else:
-            args.checkpoint = checkpoint
-            print(f'Loading checkpoint from {checkpoint}')
-    model = load_pretrained_model(args)
-    return model

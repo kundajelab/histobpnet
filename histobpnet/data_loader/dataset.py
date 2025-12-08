@@ -25,6 +25,9 @@ from histobpnet.utils.data_utils import (
 from histobpnet.utils.general_utils import is_histone, add_peak_id
 from histobpnet.data_loader.data_config import DataConfig
 
+def validate_mode(mode: str):
+    assert mode in ['train', 'val', 'test', 'chrom'], "Invalid mode. Must be one of ['train', 'val', 'test', 'chrom']"
+
 class DataModule(L.LightningDataModule):
     """DataModule for loading and processing genomic data for training and evaluation.
     
@@ -58,14 +61,14 @@ class DataModule(L.LightningDataModule):
         self.config = config
 
         # Set dataset class based on data type
-        if self.config.data_type == 'profile':
+        if self.config.model_type == 'chrombpnet':
             self.dataset_class = ChromBPNetDataset
-        elif self.config.data_type == 'histobpnet_v1':
+        elif self.config.model_type == 'histobpnet_v1':
             self.dataset_class = HistoBPNetDatasetV1
-        elif self.config.data_type == 'histobpnet_v2':
+        elif self.config.model_type == 'histobpnet_v2':
             self.dataset_class = HistoBPNetDatasetV2
         else:
-            raise NotImplementedError(f'Unsupported data type: {self.config.data_type}')
+            raise NotImplementedError(f'Unsupported model type: {self.config.model_type}')
         
         # in DDP (eg when accelerator='gpu' and devices>1), each device/process (device = GPU)
         # will use a per_device_batch_size shard of the data (Lightning takes care of the sharding)
@@ -200,7 +203,7 @@ class DataModule(L.LightningDataModule):
 
     @cached_property
     def median_count(self):
-        if is_histone(self.config.data_type):
+        if is_histone(self.config.model_type):
             raise NotImplementedError("median_count is not implemented for histone models")
         import pyBigWig
         # Calculate median count to get weight of count loss
@@ -328,7 +331,7 @@ class ChromBPNetDataset(torch.utils.data.Dataset):
         shuffle_at_epoch_start=False, 
         rc_frac=0.5,
         debug=False,
-        mode: str = "train",
+        mode: str = "",
         **kwargs
     ):
         """Initialize the generator.
@@ -350,6 +353,8 @@ class ChromBPNetDataset(torch.utils.data.Dataset):
         if debug:
             peak_regions = debug_subsample(peak_regions)
             nonpeak_regions = debug_subsample(nonpeak_regions)
+
+        validate_mode(mode)
 
         # Load data
         self.peak_seqs, self.peak_cts, _, self.peak_coords, \
@@ -441,8 +446,7 @@ class HistoBPNetDatasetV1(ChromBPNetDataset):
         shuffle_at_epoch_start=False, 
         rc_frac=0.5,
         debug=False,
-        # TODO make this required (or asert it s not empty)
-        mode: str = "train",
+        mode: str = "",
         **kwargs
     ):
         assert negative_sampling_ratio == -1
@@ -454,6 +458,8 @@ class HistoBPNetDatasetV1(ChromBPNetDataset):
         if debug:
             peak_regions = debug_subsample(peak_regions)
             nonpeak_regions = debug_subsample(nonpeak_regions)
+
+        validate_mode(mode)
 
         # Load data
         self.peak_seqs, peak_cts, peak_cts_ctrl, self.peak_coords, \
@@ -575,6 +581,8 @@ class HistoBPNetDatasetV2(ChromBPNetDataset):
         assert atac_hgp_map != ""
         atac_hgp_df = pd.read_csv(atac_hgp_map, sep="\t", header=0)
         add_peak_id(atac_hgp_df, chr_key="chrom")
+
+        validate_mode(mode)
 
         # Load data
         self.peak_seqs, self.peak_cts, self.peak_cts_ctrl, self.peak_coords, \
