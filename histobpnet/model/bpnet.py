@@ -43,7 +43,7 @@ class BPNet(torch.nn.Module):
         will still save the file at the end, but does not print anything to
         screen during training. Default is True.
     """
-
+    
     def __init__(
         self, 
         out_dim = 1000,

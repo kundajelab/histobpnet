@@ -10,24 +10,23 @@ import wandb
 from toolbox.utils import get_instance_id, set_random_seed
 from toolbox.logger import SimpleLogger
 from histobpnet.data_loader.data_config import DataConfig
-from histobpnet.model.model_config import ChromBPNetConfig, HistoBPNetConfigV1, HistoBPNetConfigV2
-from histobpnet.model.model_wrappers import create_model_wrapper, load_pretrained_model, adjust_bias_model_logcounts
+from histobpnet.model.model_config import BPNetModelConfig
+from histobpnet.model.model_wrappers import create_model_wrapper, load_model
 from histobpnet.data_loader.dataset import DataModule
 from histobpnet.eval.metrics import compare_with_observed, save_predictions, load_output_to_regions
 from histobpnet.utils.general_utils import is_histone
 
-def add_common_args(parser: argparse.ArgumentParser) -> None:
-    """Add arguments shared across train, predict, and interpret commands.
-    
-    Args:
-        parser: ArgumentParser instance to add arguments to
-    """
+def get_parsers():
+    parser = argparse.ArgumentParser()
+
     parser.add_argument('--output_dir', '-o', type=str, required=True,
                         help='Output directory')
     parser.add_argument('--fast_dev_run', action='store_true',
                        help='Run a quick development test')
     parser.add_argument('--name', type=str, default='',
                        help='Name of the run')
+    parser.add_argument('--command', type=str, required=True,
+                       help='Command to execute: train, predict, interpret')
     parser.add_argument('--gpu', type=int, nargs='+', default=[0],
                        help='GPU device IDs to use')
     parser.add_argument('--chrom', type=str, default='test',
@@ -53,46 +52,22 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
                         help='Adam optimizer epsilon value')
     parser.add_argument('--skip_wandb', action='store_true',
                         help='Do not use Weights & Biases logger')
-    
+    parser.add_argument('--shap', type=str, default='counts',
+                        help='Type of SHAP analysis')
+    parser.add_argument('--max_epochs', type=int, default=100,
+                        help='Maximum number of training epochs')
+    parser.add_argument('--precision', type=int, default=32,
+                        help='Training precision (16, 32, or 64)')
+    parser.add_argument('--gradient_clip', type=float, default=None,
+                        help='Gradient clipping value')
+    parser.add_argument('--adjust_bias', action='store_true',
+                        help='Adjust bias model')
+
     # Add model-specific arguments
-    # TODO_later do something better about this..
-    # ChromBPNetConfig.add_argparse_args(parser)
-    # HistoBPNetConfigV1.add_argparse_args(parser)
-    HistoBPNetConfigV2.add_argparse_args(parser)
+    BPNetModelConfig.add_argparse_args(parser)
 
     # Add data configuration arguments
     DataConfig.add_argparse_args(parser)
-
-def get_parsers():
-    # This tells Python: "If I add an argument that already exists, just overwrite the old one with this new one and don't crash."
-    # TODO_Later actually manage the horrible config / arg situation better
-    # parser = argparse.ArgumentParser(conflict_handler='resolve')
-    #
-    parser = argparse.ArgumentParser()
-    subparsers = parser.add_subparsers(dest='command', required=True)
-
-    # train sub-command
-    train_parser = subparsers.add_parser('train', help='Train the histobpnet model.')
-    train_parser.add_argument('--max_epochs', type=int, default=100,
-                            help='Maximum number of training epochs')
-    train_parser.add_argument('--precision', type=int, default=32,
-                            help='Training precision (16, 32, or 64)')
-    train_parser.add_argument('--gradient_clip', type=float, default=None,
-                            help='Gradient clipping value')
-    train_parser.add_argument('--adjust_bias', action='store_true',
-                            help='Adjust bias model')
-    add_common_args(train_parser)
-
-    # predict sub-command
-    predict_parser = subparsers.add_parser('predict', help='Test or predict with the pre-trained histobpnet model.')
-    predict_parser.set_defaults(plot=True) # always plot
-    add_common_args(predict_parser)
-
-    # interpret sub-command
-    interpret_parser = subparsers.add_parser('interpret', help='Interpret the pre-trained histobpnet model.')
-    interpret_parser.add_argument('--shap', type=str, default='counts',
-                                   help='Type of SHAP analysis')
-    add_common_args(interpret_parser)
 
     return parser
 
@@ -138,17 +113,12 @@ def setup(instance_id: str):
 
 def train(args, pt_output_dir: str, logger):
     assert is_histone(args.model_type), "Train currently only supported for histobpnet"
-
     logger.add_to_log(f"Training with model type: {args.model_type}")
-    logger.add_to_log(f'precision: {args.precision}')
-    logger.add_to_log(f'alpha: {args.alpha}')
-    logger.add_to_log(f'n_filters: {args.n_filters}')
 
     data_config = DataConfig.from_argparse_args(args)
-    # TODO deal with this mess
-    data_config.set_additional_args(output_bins=args.output_bins)
+    data_config.set_output_bins(args.output_bins)
 
-    datamodule = DataModule(data_config, args)
+    datamodule = DataModule(data_config, len(args.gpu))
     args.alpha = 1
     model_wrapper = create_model_wrapper(args)
 
@@ -194,23 +164,7 @@ def train(args, pt_output_dir: str, logger):
         # those here?
         torch.save(model_wrapper.model.bpnet.state_dict(), os.path.join(ckpt_dir, f'{args.model_type}.pt'))
 
-def load_model(args, output_dir: str):
-    if args.checkpoint is None:
-        checkpoint = os.path.join(output_dir, 'checkpoints/best_model.ckpt')
-        if not os.path.exists(checkpoint):
-            print(f'No checkpoint found in {output_dir}/checkpoints/best_model.ckpt')
-        else:
-            args.checkpoint = checkpoint
-            print(f'Loading checkpoint from {checkpoint}')
-    model = load_pretrained_model(args)
-    return model
-
 def predict(args, output_dir: str, model, logger, datamodule=None, mode='predict'):
-    logger.add_to_log(f'output_dir: {output_dir}')
-    logger.add_to_log(f'model_type: {args.model_type}')
-    logger.add_to_log(f'checkpoint: {args.checkpoint}')
-    logger.add_to_log(f'chrom: {args.chrom}')
-
     trainer = L.Trainer(logger=False, accelerator='gpu', fast_dev_run=args.fast_dev_run, devices=args.gpu, val_check_interval=None)
 
     # TODO_later log these
@@ -229,17 +183,11 @@ def predict(args, output_dir: str, model, logger, datamodule=None, mode='predict
     #
     # print("fast_dev_run:", trainer.fast_dev_run)            # True / False / int
     # print("max_epochs:", trainer.max_epochs)
-    # print("limit_train_batches:", trainer.limit_train_batches)
 
     if datamodule is None:
         data_config = DataConfig.from_argparse_args(args)
         data_config.set_additional_args(output_bins=args.output_bins)
-        dm = DataModule(data_config, args)
-        logger.add_to_log(f'peaks: {data_config.peaks}')
-        logger.add_to_log(f'negatives: {data_config.negatives}')
-        logger.add_to_log(f'bigwig: {data_config.bigwig}')
-        logger.add_to_log(f'fasta: {data_config.fasta}')
-        logger.add_to_log(f'chrom_sizes: {data_config.chrom_sizes}')
+        dm = DataModule(data_config, len(args.gpu))
     else:
         dm = datamodule
 

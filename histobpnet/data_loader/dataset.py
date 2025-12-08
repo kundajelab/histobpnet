@@ -23,6 +23,7 @@ from histobpnet.utils.data_utils import (
     debug_subsample,
 )
 from histobpnet.utils.general_utils import is_histone, add_peak_id
+from histobpnet.data_loader.data_config import DataConfig
 
 class DataModule(L.LightningDataModule):
     """DataModule for loading and processing genomic data for training and evaluation.
@@ -47,7 +48,7 @@ class DataModule(L.LightningDataModule):
         test_chroms: List of chromosomes used for testing
     """
     
-    def __init__(self, config, args):
+    def __init__(self, config: DataConfig, gpu_count: int):
         """Initialize the DataModule.
         
         config:
@@ -80,7 +81,7 @@ class DataModule(L.LightningDataModule):
         # Beware: if you change the number of devices and dont run the line below, then your effective (global) batch size
         # will change accordingly, which may affect training dynamics. On the other hand, you might under-utilize your GPUs
         # if your config.batch_size is small and you have many GPUs. So pick your poison...
-        self.per_device_batch_size = config.batch_size // len(args.gpu)
+        self.per_device_batch_size = config.batch_size // gpu_count
 
         # Load and process data
         self._load_regions()

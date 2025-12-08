@@ -13,77 +13,10 @@ import wandb
 import matplotlib.pyplot as plt
 
 from histobpnet.model.bpnet import BPNet
-from histobpnet.model.chrombpnet import ChromBPNet
-from histobpnet.model.histobpnet_v1 import HistoBPNetV1
-from histobpnet.model.histobpnet_v2 import HistoBPNetV2
-from histobpnet.model.model_config import ChromBPNetConfig, HistoBPNetConfigV1, HistoBPNetConfigV2
-from histobpnet.utils.general_utils import to_numpy, multinomial_nll, pearson_corr, is_histone
-
-# valeh: ?? TODO
-def adjust_bias_model_logcounts(bias_model, dataloader, verbose=False, device=1):
-    """
-    Given a bias model, sequences and associated counts, the function adds a 
-    constant to the output of the bias_model's logcounts that minimizes squared
-    error between predicted logcounts and observed logcounts (inferred from 
-    cts). This simply reduces to adding the average difference between observed 
-    and predicted to the "bias" (constant additive term) of the Dense layer.
-    Typically the seqs and counts would correspond to training nonpeak regions.
-    ASSUMES model_bias's last layer is a dense layer that outputs logcounts. 
-    This would change if you change the model.
-    """
-    print("Adjusting bias model counts")
-    bias_model.eval()
-    with torch.no_grad():
-        bias_model.to('cuda')
-        for batch in tqdm(dataloader):
-            batch = {k: v.to('cuda') if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
-            _, pred_counts = bias_model(batch['onehot_seq'])
-            true_counts = batch['profile'].sum(dim=-1).log1p()
-            # _delta = out['true_count'].mean(-1) - out['pred_count'].mean(-1)
-            _delta = true_counts.mean(-1) - pred_counts.mean(-1)
-            delta.append(_delta)
-        delta = torch.cat(delta, dim=0).mean()
-        # bpnet_wrapper = BPNetWrapper(args)
-        # bpnet_wrapper.model = bias_model
-        # output = L.Trainer(logger=False, devices=device).predict(bpnet_wrapper, dataloader)
-        # parsed_output = {key: np.concatenate([batch[key] for batch in output]) for key in output[0]}
-        # delta = parsed_output['true_count'].mean(-1) - parsed_output['pred_count'].mean(-1)
-        # delta = torch.cat([predictions['delta'] for predictions in predictions], dim=0).mean()
-
-    if verbose:
-        print('### delta', delta, flush=True)
-    return bias_model
-
-def init_bias(bias, dataloader=None, verbose=False, device=1):
-    print(f"Loading bias model from {bias}")
-    bias_model = BPNet.from_keras(bias, name='bias')
-    # Freeze the sub-model
-    bias_model.eval()
-    for param in bias_model.parameters():
-        param.requires_grad = False
-
-    if dataloader is not None:
-        bias_model = adjust_bias_model_logcounts(bias_model, dataloader, verbose=verbose, device=device)
-    return bias_model
-
-def init_chrombpnet_wo_bias(chrombpnet_wo_bias, freeze=True, instance=None):
-    print(f"Loading chrombpnet_wo_bias model from {chrombpnet_wo_bias}")
-    if chrombpnet_wo_bias.endswith('.h5'):
-        model = BPNet.from_keras(chrombpnet_wo_bias, instance=instance)
-    elif chrombpnet_wo_bias.endswith('.pt'):
-        # n_filters=512 for chrombpnet's accessibility model
-        model = BPNet(n_filters=512, n_layers=8)
-        # TODO why map_location cpu?
-        model.load_state_dict(torch.load(chrombpnet_wo_bias, map_location='cpu'))
-    elif chrombpnet_wo_bias.endswith('.ckpt'):
-        model = BPNet.load_from_checkpoint(chrombpnet_wo_bias)
-
-    if freeze:
-        model.eval()
-        for param in model.parameters():
-            param.requires_grad = False
-
-    return model
+from histobpnet.model.bpnet_wrapper import BPNetWrapper, ChromBPNetWrapper
+from histobpnet.model.histobpnet_wrapper_v1 import HistoBPNetWrapperV1
+from histobpnet.model.histobpnet_wrapper_v2 import HistoBPNetWrapperV2
+from histobpnet.utils.general_utils import pearson_corr, is_histone
 
 class ModelWrapper(LightningModule):
     """A generic wrapper for different model architectures to be used with PyTorch Lightning.
@@ -142,24 +75,51 @@ class ModelWrapper(LightningModule):
         """
         return self.model(x, **kwargs)
 
+    # def configure_optimizers(self) -> Union[torch.optim.Optimizer, Dict[str, Any]]:
+    #     raise NotImplementedError("Subclasses must implement this method")
+
     def configure_optimizers(self) -> Union[torch.optim.Optimizer, Dict[str, Any]]:
         # TODO_NOW validate that self.model will be the right model...
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr, eps=self.optimizer_eps)
         return optimizer
-
-    # def configure_optimizers(self) -> Union[torch.optim.Optimizer, Dict[str, Any]]:
-    #     raise NotImplementedError("Subclasses must implement this method")
     
     def _step(self, batch, batch_idx, mode='train'):
         raise NotImplementedError("Subclasses must implement this method")
 
-    def init_bias(self, bias, dataloader=None, verbose=False, device=1):
-        # print(f"Loading bias model from {bias}")
-        return init_bias(bias, dataloader=dataloader, verbose=verbose, device=device)
+    def init_bias(self, bias: str, dataloader=None, verbose=False, device=1):
+        print(f"Loading bias model from {bias}")
+        bias_model = BPNet.from_keras(bias, name='bias')
 
-    def init_chrombpnet_wo_bias(self, chrombpnet_wo_bias, freeze=True, instance=None):
-        # print(f"Initializing chrombpnet_wo_bias model from {chrombpnet_wo_bias}")
-        return init_chrombpnet_wo_bias(chrombpnet_wo_bias, freeze=freeze, instance=instance)
+        # Freeze the sub-model
+        bias_model.eval()
+        for param in bias_model.parameters():
+            param.requires_grad = False
+
+        if dataloader is not None:
+            bias_model = adjust_bias_model_logcounts(bias_model, dataloader, verbose=verbose, device=device)
+
+        return bias_model
+
+    def init_chrombpnet_wo_bias(self, chrombpnet_wo_bias: str, freeze=True, instance=None):
+        print(f"Loading chrombpnet_wo_bias model from {chrombpnet_wo_bias}")
+        if chrombpnet_wo_bias.endswith('.h5'):
+            model = BPNet.from_keras(chrombpnet_wo_bias, instance=instance)
+        elif chrombpnet_wo_bias.endswith('.pt'):
+            # n_filters=512 for chrombpnet's accessibility model
+            model = BPNet(n_filters=512, n_layers=8)
+            # TODO why map_location cpu?
+            model.load_state_dict(torch.load(chrombpnet_wo_bias, map_location='cpu'))
+        elif chrombpnet_wo_bias.endswith('.ckpt'):
+            model = BPNet.load_from_checkpoint(chrombpnet_wo_bias)
+        else:
+            raise ValueError("File format not recognized for chrombpnet_wo_bias")
+
+        if freeze:
+            model.eval()
+            for param in model.parameters():
+                param.requires_grad = False
+
+        return model
 
     def _predict_on_dataloader(self, dataloader, func, **kwargs):
         raise ValueError("Putting this here for now so I know when it's called!")
@@ -298,254 +258,41 @@ class ModelWrapper(LightningModule):
             if close_fig:
                 plt.close(fig)
 
-class BPNetWrapper(ModelWrapper):
-    """Wrapper for BPNet model with specific configurations and loss functions.
-    
-    This wrapper extends the base ModelWrapper to handle BPNet-specific features
-    such as profile and count predictions, and appropriate loss calculations.
+# valeh: ?? TODO
+def adjust_bias_model_logcounts(bias_model, dataloader, verbose=False, device=1):
     """
-
-    def __init__(self, args):
-        super().__init__(args)
-        self.model = BPNet(
-            out_dim=args.out_dim,
-            n_filters=args.n_filters, 
-            n_layers=args.n_layers, 
-            conv1_kernel_size=args.conv1_kernel_size,
-            profile_kernel_size=args.profile_kernel_size,
-            n_outputs=args.n_outputs, 
-            n_control_tracks=args.n_control_tracks, 
-            profile_output_bias=args.profile_output_bias, 
-            count_output_bias=args.count_output_bias, 
-        )
-        self.model_type = "bpnet"
-
-    def _step(self, batch, batch_idx, mode: str = 'train'):
-        assert mode in ['train', 'val', 'test', 'predict'], "Invalid mode. Must be one of ['train', 'val', 'test', 'predict']"
-
-        x = batch['onehot_seq'] # batch_size x 4 x seq_length
-        true_profile = batch['profile'] # batch_size x seq_length
-
-        assert x.shape[1] == 4, "Input sequence must be one-hot encoded with 4 channels (A, C, G, T)"
-        assert x.shape[0] == true_profile.shape[0], "Batch size of input sequence and profile must match"
-
-        # TODO why log1p here but in save_predictions we're not undoing this exact transformation?
-        true_counts = torch.log1p(true_profile.sum(dim=-1))
-
-        y_profile, y_count = self(x)
-        y_count = y_count.squeeze(-1) # batch_size x 1
-
-        if mode == 'predict':
-            return {
-                'pred_count': to_numpy(y_count),
-                'true_count': to_numpy(true_counts),
-                'pred_profile': to_numpy(y_profile),
-                'true_profile': to_numpy(true_profile),
-            }
-
-        self.metrics[mode]['preds'].append(y_count)
-        self.metrics[mode]['targets'].append(true_counts)
-        self.metrics[mode]['peak_status'].append(batch['peak_status'])
-        with torch.no_grad():
-            profile_pearson = pearson_corr(y_profile.softmax(-1), true_profile).mean()
-            self.log_dict(
-                {f"{mode}_profile_pearson": profile_pearson},
-                on_step=False,
-                on_epoch=True,
-                prog_bar=True,
-                logger=True,
-                sync_dist=True
-            )
-
-        profile_loss = multinomial_nll(y_profile, true_profile)
-        count_loss = F.mse_loss(y_count, true_counts)
-        loss = self.beta * profile_loss + self.alpha * count_loss
-
-        dict_show = {
-            f'{mode}_loss': loss, 
-            f'{mode}_profile_loss': profile_loss,
-            f'{mode}_count_loss': count_loss,
-        }
-        self.log_dict(dict_show, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
-
-        return loss
-
-    # TODO review
-    def predict(self, x, forward_only=True):
-        raise ValueError("Putting this here for now so I know when it's called!")
-
-        y_profile, y_count = self(x)
-        y_count = torch.exp(y_count)
-
-        if not forward_only:
-            y_profile_revcomp, y_count_revcomp = self(x[:, ::-1, ::-1])
-            y_count_revcomp = torch.exp(y_count_revcomp)
-            y_profile = (y_profile + y_profile_revcomp) / 2
-            y_count = (y_count + y_count_revcomp) / 2
-
-        return y_profile.cpu().numpy(), y_count.cpu().numpy()
-    
-class ChromBPNetWrapper(BPNetWrapper):
-    """Wrapper for ChromBPNet model with specific configurations and loss functions.
-    
-    This wrapper extends the base ModelWrapper to handle ChromBPNet-specific features
-    such as chromatin accessibility predictions and appropriate loss calculations.
+    Given a bias model, sequences and associated counts, the function adds a 
+    constant to the output of the bias_model's logcounts that minimizes squared
+    error between predicted logcounts and observed logcounts (inferred from 
+    cts). This simply reduces to adding the average difference between observed 
+    and predicted to the "bias" (constant additive term) of the Dense layer.
+    Typically the seqs and counts would correspond to training nonpeak regions.
+    ASSUMES model_bias's last layer is a dense layer that outputs logcounts. 
+    This would change if you change the model.
     """
+    print("Adjusting bias model counts")
+    bias_model.eval()
+    with torch.no_grad():
+        bias_model.to('cuda')
+        for batch in tqdm(dataloader):
+            batch = {k: v.to('cuda') if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+            _, pred_counts = bias_model(batch['onehot_seq'])
+            true_counts = batch['profile'].sum(dim=-1).log1p()
+            # _delta = out['true_count'].mean(-1) - out['pred_count'].mean(-1)
+            _delta = true_counts.mean(-1) - pred_counts.mean(-1)
+            delta.append(_delta)
+        delta = torch.cat(delta, dim=0).mean()
+        # bpnet_wrapper = BPNetWrapper(args)
+        # bpnet_wrapper.model = bias_model
+        # output = L.Trainer(logger=False, devices=device).predict(bpnet_wrapper, dataloader)
+        # parsed_output = {key: np.concatenate([batch[key] for batch in output]) for key in output[0]}
+        # delta = parsed_output['true_count'].mean(-1) - parsed_output['pred_count'].mean(-1)
+        # delta = torch.cat([predictions['delta'] for predictions in predictions], dim=0).mean()
 
-    def __init__(
-        self,
-        args,
-    ):
-        """Initialize ChromBPNet wrapper.
-        
-        Args:
-            model: ChromBPNet model instance
-            alpha: Weight for count loss
-            bias_scaled: Path to bias model if using scaled bias
-            **kwargs: Additional arguments to be passed to the model
-        """
-        super().__init__(args)
+    if verbose:
+        print('### delta', delta, flush=True)
+    return bias_model
 
-        config = ChromBPNetConfig.from_argparse_args(args)
-        self.model = ChromBPNet(config)
-        self.model_type = config.model_type
-
-class HistoBPNetWrapperV1(ModelWrapper):
-    def __init__(
-        self,
-        args,
-    ):
-        super().__init__(args)
-
-        config = HistoBPNetConfigV1.from_argparse_args(args)
-        self.model = HistoBPNetV1(config)
-        self.model_type = config.model_type
-
-    def _step(self, batch, batch_idx, mode: str = 'train'):
-        assert mode in ['train', 'val', 'test', 'predict'], "Invalid mode. Must be one of ['train', 'val', 'test', 'predict']"
-
-        x = batch['onehot_seq'] # batch_size x 4 x seq_length
-        # dict of num_bins elements each of shape batch_size x bin_width
-        true_bin_profile = batch['per_bin_profile'] 
-        true_bin_profile_ctl = batch['per_bin_profile_ctrl']
-
-        true_binned_logsum, true_binned_logsum_ctl = self._make_binned_counts(true_bin_profile, true_bin_profile_ctl, eps=1e-6)
-
-        assert x.shape[1] == 4, "Input sequence must be one-hot encoded with 4 channels (A, C, G, T)"
-        assert x.shape[0] == true_binned_logsum.shape[0], "Batch size of input sequence and true_binned_logsum must match"
-        assert x.shape[0] == true_binned_logsum_ctl.shape[0], "Batch size of input sequence and true_binned_logsum_ctl must match"
-
-        _, y_count = self(x, observed_ctrl=true_binned_logsum_ctl) # batch_size x num_bins
-
-        if mode == 'predict':
-            return {
-                'pred_count': to_numpy(y_count),
-                'true_count': to_numpy(true_binned_logsum),
-            }
-
-        self.metrics[mode]['preds'].append(y_count)
-        self.metrics[mode]['targets'].append(true_binned_logsum)
-        self.metrics[mode]['peak_status'].append(batch['peak_status'])
-
-        # TODO_NOW does mse in log space make sense? that's what bpnet does though (see def _step)
-        mse_elements = (y_count - true_binned_logsum) ** 2     # shape: (batch_size, n_bins)
-        count_loss = mse_elements.mean()
-        loss = count_loss
-
-        dict_show = {
-            f'{mode}_loss': loss, 
-            f'{mode}_count_loss': count_loss,
-        }
-        self.log_dict(dict_show, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
-
-        return loss
-    
-    def _make_binned_counts(self, true_bin_profile, true_bin_profile_ctl, eps=1e-6):
-        """
-        true_bin_profile: dict[int -> tensor], each tensor (batch_size, bin_width)
-        true_bin_profile_ctl: same structure as true_bin_profile
-
-        returns:
-        true_binned_logsum: (batch_size, num_bins)
-        true_binned_lfc:    (batch_size, num_bins)
-        """
-        # ensure a consistent bin order
-        assert list(true_bin_profile.keys()) == self.model.output_bins
-        assert list(true_bin_profile_ctl.keys()) == self.model.output_bins
-
-        # sum over bin_width dimension for each bin -> list of (batch_size,)
-        true_sums = [true_bin_profile[k].sum(dim=1) for k in self.model.output_bins]
-        ctl_sums  = [true_bin_profile_ctl[k].sum(dim=1) for k in self.model.output_bins]
-
-        # stack into (batch_size, num_bins)
-        true_sums_mat = torch.stack(true_sums, dim=1)   # (batch_size, num_bins)
-        ctl_sums_mat  = torch.stack(ctl_sums, dim=1)    # (batch_size, num_bins)
-
-        # log of summed counts per bin
-        # TODO_NOW log or log1p?... here and below. bpnet does log1p (see def count_head and def _step)
-        true_binned_logsum = torch.log(true_sums_mat + eps)
-
-        # log fold change per bin: log(sum_t / sum_ctl)
-        # true_binned_lfc = torch.log((true_sums_mat + eps) / (ctl_sums_mat + eps))
-        true_binned_logsum_ctl = torch.log(ctl_sums_mat + eps)
-
-        return true_binned_logsum, true_binned_logsum_ctl
-
-class HistoBPNetWrapperV2(ModelWrapper):
-    def __init__(
-        self,
-        args,
-    ):
-        super().__init__(args)
-
-        config = HistoBPNetConfigV2.from_argparse_args(args)
-        self.model = HistoBPNetV2(config)
-        self.model_type = config.model_type
-
-    def _step(self, batch, batch_idx, mode: str = 'train'):
-        assert mode in ['train', 'val', 'test', 'predict'], "Invalid mode. Must be one of ['train', 'val', 'test', 'predict']"
-
-        x = batch['onehot_seq'] # batch_size x 4 x seq_length
-        true_profile = batch['profile'] 
-        true_profile_ctl = batch['profile_ctrl']
-        assert true_profile.shape == true_profile_ctl.shape, "Control profile shape must match chip profile shape"
-
-        # TODO log or log1p?.... bpnet does log1p (see def count_head and def _step)
-        if true_profile.dim() == 2:
-            true_logsum, true_logsum_ctl = true_profile.sum(dim=-1).log1p(), true_profile_ctl.sum(dim=-1).log1p()
-        else:
-            true_logsum, true_logsum_ctl = true_profile.log1p(), true_profile_ctl.log1p()
-
-        assert x.shape[1] == 4, "Input sequence must be one-hot encoded with 4 channels (A, C, G, T)"
-        assert x.shape[0] == true_logsum.shape[0], "Batch size of input sequence and true_logsum must match"
-        assert x.shape[0] == true_logsum_ctl.shape[0], "Batch size of input sequence and true_logsum_ctl must match"
-        
-        _, y_count = self(x, observed_ctrl=true_logsum_ctl) # batch_size x 1
-        y_count = y_count.squeeze(-1)
-
-        if mode == 'predict':
-            return {
-                'pred_count': to_numpy(y_count),
-                'true_count': to_numpy(true_logsum),
-            }
-
-        self.metrics[mode]['preds'].append(y_count)
-        self.metrics[mode]['targets'].append(true_logsum)
-        self.metrics[mode]['peak_status'].append(batch['peak_status'])
-
-        # TODO does mse in log space make sense? that's what bpnet does though (see def _step)
-        mse_elements = (y_count - true_logsum) ** 2     # shape: (batch_size, 1)
-        count_loss = mse_elements.mean()
-        loss = count_loss
-
-        dict_show = {
-            f'{mode}_loss': loss, 
-            f'{mode}_count_loss': count_loss,
-        }
-        self.log_dict(dict_show, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
-
-        return loss
-    
 def create_model_wrapper(
     args,
 ) -> ModelWrapper:
@@ -556,32 +303,21 @@ def create_model_wrapper(
         return BPNetWrapper(args)
     elif model_type == 'chrombpnet':
         model_wrapper = ChromBPNetWrapper(args)
-        if args.bias_scaled:
-            model_wrapper.model.bias = model_wrapper.init_bias(args.bias_scaled)
-        if args.chrombpnet_wo_bias:
-            model_wrapper.model.model = model_wrapper.init_chrombpnet_wo_bias(args.chrombpnet_wo_bias, freeze=False)
+        model_wrapper.load_from_pretrained(args.bias_scaled, args.chrombpnet_wo_bias)
         return model_wrapper
     elif model_type == 'histobpnet_v1':
         model_wrapper = HistoBPNetWrapperV1(args)
-        if args.chrombpnet_wo_bias:
-            model_wrapper.model.bpnet = model_wrapper.init_chrombpnet_wo_bias(
-                args.chrombpnet_wo_bias,
-                freeze=False,
-                instance=model_wrapper.model.bpnet
-            )
+        model_wrapper.load_from_pretrained(args.chrombpnet_wo_bias)
         return model_wrapper
     elif model_type == 'histobpnet_v2':
         model_wrapper = HistoBPNetWrapperV2(args)
-        if args.chrombpnet_wo_bias:
-            model_wrapper.model.bpnet = model_wrapper.init_chrombpnet_wo_bias(
-                args.chrombpnet_wo_bias,
-                freeze=False,
-                instance=model_wrapper.model.bpnet
-            )
+        model_wrapper.load_from_pretrained(args.chrombpnet_wo_bias)
         return model_wrapper
     else:
         raise ValueError(f"Unknown model type: {model_type}") 
 
+# STOPPED HERE. go through this and the one below and review/fix
+# also continue to check where else args is passe... starting from main,py...
 def load_pretrained_model(args):
     model_type = args.model_type.lower()
     if model_type == 'chrombpnet':
@@ -619,3 +355,14 @@ def load_pretrained_model(args):
         raise NotImplementedError(f"Loading pretrained models not implemented for model type {model_type}")
 
     return model_wrapper
+
+def load_model(args, output_dir: str):
+    if args.checkpoint is None:
+        checkpoint = os.path.join(output_dir, 'checkpoints/best_model.ckpt')
+        if not os.path.exists(checkpoint):
+            print(f'No checkpoint found in {output_dir}/checkpoints/best_model.ckpt')
+        else:
+            args.checkpoint = checkpoint
+            print(f'Loading checkpoint from {checkpoint}')
+    model = load_pretrained_model(args)
+    return model
