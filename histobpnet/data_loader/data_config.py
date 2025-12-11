@@ -33,6 +33,7 @@ class DataConfig:
         atac_hgp_map: str = None,
         skip_missing_hist: bool = False,
         ctrl_scaling_factor: float = 1.0,
+        outputlen_neg: int = None,
         shift: int = 500,
         rc_frac: float = 0.5,
         outlier_threshold: float = 0.999,
@@ -73,6 +74,7 @@ class DataConfig:
         self.atac_hgp_map = atac_hgp_map
         self.skip_missing_hist = skip_missing_hist
         self.ctrl_scaling_factor = ctrl_scaling_factor
+        self.outputlen_neg = outputlen_neg
         self.shift = shift
         self.rc_frac = rc_frac
         self.outlier_threshold = outlier_threshold

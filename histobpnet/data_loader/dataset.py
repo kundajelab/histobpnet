@@ -158,6 +158,7 @@ class DataModule(L.LightningDataModule):
                 rc_frac=config.rc_frac,
                 mode='train',
                 ctrl_scaling_factor=config.ctrl_scaling_factor,
+                config=config,
             )
             self.val_dataset = self.dataset_class(
                 peak_regions=val_peaks,
@@ -178,6 +179,7 @@ class DataModule(L.LightningDataModule):
                 rc_frac=config.rc_frac,
                 mode='val',
                 ctrl_scaling_factor=config.ctrl_scaling_factor,
+                config=config,
             )
         elif stage == 'test':
             test_peaks, test_nonpeaks = split_peak_and_nonpeak(self.test_data)
@@ -200,6 +202,7 @@ class DataModule(L.LightningDataModule):
                 rc_frac=config.rc_frac,
                 mode='test',
                 ctrl_scaling_factor=config.ctrl_scaling_factor,
+                config=config,
             )
 
         print(f'Data setup complete in {time() - t0:.2f} seconds')
@@ -310,6 +313,7 @@ class DataModule(L.LightningDataModule):
             rc_frac=self.config.rc_frac,
             mode='chrom',
             ctrl_scaling_factor=self.config.ctrl_scaling_factor,
+            config=self.config,
         )
         return dataset
 
@@ -573,11 +577,14 @@ class HistoBPNetDatasetV2(ChromBPNetDataset):
         debug=False,
         mode: str = "train",
         ctrl_scaling_factor: float = 1.0,
+        config: DataConfig = None,
         **kwargs
     ):
         assert max_jitter == 0
-        assert negative_sampling_ratio == -1
+        # assert negative_sampling_ratio == -1
         assert rc_frac == 0
+        # TODO make this mandatory for all datasetclasses probably and replace all the other goo with this
+        assert config is not None
 
         if debug:
             peak_regions = debug_subsample(peak_regions)
@@ -599,6 +606,7 @@ class HistoBPNetDatasetV2(ChromBPNetDataset):
             get_total_cts=True, skip_missing_hist=skip_missing_hist,
             mode=mode,
             ctrl_scaling_factor=ctrl_scaling_factor,
+            outputlen_neg = config.outputlen_neg,
         )
 
         # Store parameters

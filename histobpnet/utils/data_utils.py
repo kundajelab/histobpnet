@@ -127,14 +127,16 @@ def load_region_df(
 
     return filtered_df
 
-def subsample_nonpeak_data(nonpeak_seqs, nonpeak_cts, nonpeak_coords, peak_data_size, negative_sampling_ratio):
+def subsample_nonpeak_data(nonpeak_seqs, nonpeak_cts, nonpeak_cts_ctrl, nonpeak_coords, peak_data_size, negative_sampling_ratio):
     # Randomly samples a portion of the non-peak data to use in training
     num_nonpeak_samples = int(negative_sampling_ratio * peak_data_size)
     nonpeak_indices_to_keep = np.random.choice(len(nonpeak_seqs), size=min(num_nonpeak_samples, len(nonpeak_seqs)), replace=False)
     nonpeak_seqs = nonpeak_seqs[nonpeak_indices_to_keep]
     nonpeak_cts = nonpeak_cts[nonpeak_indices_to_keep]
+    if nonpeak_cts_ctrl is not None:
+        nonpeak_cts_ctrl = nonpeak_cts_ctrl[nonpeak_indices_to_keep]
     nonpeak_coords = nonpeak_coords[nonpeak_indices_to_keep]
-    return nonpeak_seqs, nonpeak_cts, nonpeak_coords
+    return nonpeak_seqs, nonpeak_cts, nonpeak_cts_ctrl, nonpeak_coords
 
 def concat_peaks_and_subsampled_negatives(peaks, negatives=None, negative_sampling_ratio=0.1):
     if negatives is None:
@@ -270,38 +272,76 @@ def get_seq_cts_coords(
     mode: str = "",
     ctrl_scaling_factor: float = 1.0,
 ):
+    read_cache = False
+    print("Reading from cache:", read_cache)
+
     # TODO_later remove this after im done debugging
     peaks_str = "peaks" if peaks_bool==1 else "nonpeaks"
+    smh_str = "smh" if skip_missing_hist else "nosmh"
 
-    temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/seqs_{mode}_{peaks_str}.npy"
-    if not os.path.isfile(temp_p):
+    if read_cache:
+        temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/seqs_{mode}_{peaks_str}_{str(ctrl_scaling_factor)}.npy"
+        if not os.path.isfile(temp_p):
+            seq = get_seq(peaks_df, genome, input_width)
+            np.save(temp_p, seq)
+        else:
+            seq = np.load(temp_p)
+    else:
         seq = get_seq(peaks_df, genome, input_width)
-        np.save(temp_p, seq)
-    else:
-        seq = np.load(temp_p)
 
-    file_name = f"cts_{mode}_{peaks_str}_{str(ctrl_scaling_factor)}_fast.npy" if ctrl_scaling_factor != 1.0 else f"cts_{mode}_{peaks_str}_fast.npy"
-    temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/{file_name}"
-    if not os.path.isfile(temp_p):
-        cts = get_cts(
-            peaks_df,
-            bw,
-            output_width,
-            atac_hgp_df=atac_hgp_df,
-            get_total_cts=get_total_cts,
-            skip_missing_hist=skip_missing_hist,
-            ctrl_scaling_factor=ctrl_scaling_factor,
-        )
-        np.save(temp_p, cts)
+    if read_cache:
+        if ctrl_scaling_factor != 1.0:
+            file_name = f"cts_{mode}_{peaks_str}_{smh_str}_{str(ctrl_scaling_factor)}_fast.npy"
+        else:
+            file_name = f"cts_{mode}_{peaks_str}_{smh_str}_fast.npy"
+        temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/{file_name}"
+        if not os.path.isfile(temp_p):
+            cts = get_cts(
+                peaks_df,
+                bw,
+                output_width,
+                atac_hgp_df=atac_hgp_df,
+                get_total_cts=get_total_cts,
+                skip_missing_hist=skip_missing_hist,
+                ctrl_scaling_factor=ctrl_scaling_factor,
+            )
+            np.save(temp_p, cts)
+        else:
+            cts = np.load(temp_p)
     else:
-        cts = np.load(temp_p)
+        cts = get_cts(
+                peaks_df,
+                bw,
+                output_width,
+                atac_hgp_df=atac_hgp_df,
+                get_total_cts=get_total_cts,
+                skip_missing_hist=skip_missing_hist,
+                ctrl_scaling_factor=ctrl_scaling_factor,
+            )
 
     if bw_ctrl is None:
         cts_ctrl = None
     else:
-        file_name = f"cts_ctrl_{mode}_{peaks_str}_{str(ctrl_scaling_factor)}_fast.npy" if ctrl_scaling_factor != 1.0 else f"cts_ctrl_{mode}_{peaks_str}_fast.npy"
-        temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/{file_name}"
-        if not os.path.isfile(temp_p):
+        if read_cache:
+            if ctrl_scaling_factor != 1.0:
+                file_name = f"cts_ctrl_{mode}_{peaks_str}_{smh_str}_{str(ctrl_scaling_factor)}_fast.npy"
+            else:
+                file_name = f"cts_ctrl_{mode}_{peaks_str}_{smh_str}_fast.npy"
+            temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/{file_name}"
+            if not os.path.isfile(temp_p):
+                cts_ctrl = get_cts(
+                    peaks_df,
+                    bw_ctrl,
+                    output_width,
+                    atac_hgp_df=atac_hgp_df,
+                    get_total_cts=get_total_cts,
+                    skip_missing_hist=skip_missing_hist,
+                    ctrl_scaling_factor=ctrl_scaling_factor,
+                )
+                np.save(temp_p, cts_ctrl)
+            else:
+                cts_ctrl = np.load(temp_p)
+        else:
             cts_ctrl = get_cts(
                 peaks_df,
                 bw_ctrl,
@@ -311,9 +351,6 @@ def get_seq_cts_coords(
                 skip_missing_hist=skip_missing_hist,
                 ctrl_scaling_factor=ctrl_scaling_factor,
             )
-            np.save(temp_p, cts_ctrl)
-        else:
-            cts_ctrl = np.load(temp_p)
 
     coords = get_coords(peaks_df, peaks_bool)
     return seq, cts, cts_ctrl, coords
@@ -333,6 +370,7 @@ def load_data(
     skip_missing_hist = False,
     mode: str = "",
     ctrl_scaling_factor: float = 1.0,
+    outputlen_neg: int = None,
 ):
     """
     Load sequences and corresponding base resolution counts for training, 
@@ -354,7 +392,7 @@ def load_data(
     elif atac_hgp_df is not None:
         output_len = (atac_hgp_df['hist_end'] - atac_hgp_df['hist_start']).max()
         # we'll use this for nonpeak regions since we dont know what a "good" outputlen should be
-        output_len_neg = int((atac_hgp_df['hist_end'] - atac_hgp_df['hist_start']).mean())
+        output_len_neg = int((atac_hgp_df['hist_end'] - atac_hgp_df['hist_start']).mean()) if outputlen_neg is None else outputlen_neg
     else:
         output_len = outputlen
         output_len_neg = output_len
@@ -760,17 +798,20 @@ def crop_revcomp_data(
         cropped_peaks, cropped_cnts, cropped_cnts_ctrl, cropped_coords = crop_peak_data()
         
         # Sample negative examples
-        # valeh: why is this needed btw? dont we do this during pre-processing?
+        # valeh: why is this needed btw? dont we do this during pre-processing? -> I think this is for further
+        # subsampling during training. What we do during pre-proc (when building GC-matched negatvies) is different,
+        # it's not meant for handling class imbalance during training.
         if negative_sampling_ratio > 0:
             if output_bins is not None:
                 raise NotImplementedError("Subsampling non-peak data with output bins is not implemented yet.")
-            sampled_nonpeak_seqs, sampled_nonpeak_cts, sampled_nonpeak_coords = subsample_nonpeak_data(
-                nonpeak_seqs, nonpeak_cts, nonpeak_coords,
+            sampled_nonpeak_seqs, sampled_nonpeak_cts, sampled_nonpeak_cts_ctrl, sampled_nonpeak_coords = subsample_nonpeak_data(
+                nonpeak_seqs, nonpeak_cts, nonpeak_cts_ctrl, nonpeak_coords,
                 len(peak_seqs), negative_sampling_ratio
             )
             seqs = np.vstack([cropped_peaks, sampled_nonpeak_seqs])
             coords = np.vstack([cropped_coords, sampled_nonpeak_coords])
             cts = np.vstack([cropped_cnts, sampled_nonpeak_cts])
+            cts_ctrl = None if nonpeak_cts_ctrl is None else np.vstack([cropped_cnts_ctrl, sampled_nonpeak_cts_ctrl])
             peak_status = np.array([1]*len(cropped_peaks) + [0]*len(sampled_nonpeak_seqs)).reshape(-1,1)
         else:
             seqs = np.vstack([cropped_peaks, nonpeak_seqs])
