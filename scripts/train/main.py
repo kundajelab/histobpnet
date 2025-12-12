@@ -18,6 +18,7 @@ from histobpnet.utils.general_utils import is_histone
 from histobpnet.model.bpnet_wrapper import BPNetWrapper, ChromBPNetWrapper
 from histobpnet.model.histobpnet_wrapper_v1 import HistoBPNetWrapperV1
 from histobpnet.model.histobpnet_wrapper_v2 import HistoBPNetWrapperV2
+from histobpnet.model.histobpnet_wrapper_v3 import HistoBPNetWrapperV3
 
 def get_parsers():
     parser = argparse.ArgumentParser()
@@ -171,7 +172,7 @@ def train(args, output_dir: str, logger):
     # return the path to the best_model.ckpt
     return os.path.join(trainer.checkpoint_callback.dirpath, 'best_model.ckpt')
 
-def predict(args, output_dir: str, model, logger, datamodule=None, mode='predict'):
+def predict(args, output_dir: str, model, logger, mode='predict', chrom: str=None):
     trainer = L.Trainer(logger=False, accelerator='gpu', fast_dev_run=args.fast_dev_run, devices=args.gpu, val_check_interval=None)
 
     # TODO_later log these
@@ -191,23 +192,24 @@ def predict(args, output_dir: str, model, logger, datamodule=None, mode='predict
     # print("fast_dev_run:", trainer.fast_dev_run)            # True / False / int
     # print("max_epochs:", trainer.max_epochs)
 
-    if datamodule is None:
-        data_config = DataConfig.from_argparse_args(args)
-        data_config.set_additional_args(output_bins=args.output_bins, model_type=args.model_type)
-        dm = DataModule(data_config, len(args.gpu))
-    else:
-        dm = datamodule
+    data_config = DataConfig.from_argparse_args(args)
+    data_config.set_additional_args(output_bins=args.output_bins, model_type=args.model_type)
+    dm = DataModule(data_config, len(args.gpu))
+    model_config = model.get_model_config()
 
-    chrom = args.chrom
-    dataloader, dataset = dm.chrom_dataloader(chrom)
+    chr = chrom if chrom is not None else args.chrom
+    dataloader, dataset = dm.chrom_dataloader(chr)
     output = trainer.predict(model, dataloader)
     # the last batch may be smaller than batch_size (drop_last is False by default)
     assert (len(output[:-1]) * data_config.batch_size + output[-1]['pred_count'].shape[0]) == dataset.cur_seqs.shape[0]
-    od = os.path.join(output_dir, mode, chrom)
+    od = os.path.join(output_dir, mode, chr)
     os.makedirs(od, exist_ok=False)
     regions, parsed_output = load_output_to_regions(output, dataset.regions, od)
-    model_metrics = compare_with_observed(regions, parsed_output, od)     
-    save_predictions(output, regions, data_config.chrom_sizes, od, seqlen=args.out_dim)
+    skip_profile = is_histone(data_config.model_type)
+    compare_with_observed(regions, parsed_output, od, skip_profile=skip_profile)
+    # currently only predict counts for histobpnet
+    if not skip_profile:
+        save_predictions(output, regions, data_config.chrom_sizes, od, seqlen=model_config.out_dim)
 
 # TODO review + interpret.py
 def interpret(args, args_d, model, datamodule=None):
@@ -261,6 +263,12 @@ def create_model_wrapper(args, checkpoint: str = None):
             return HistoBPNetWrapperV2.load_from_checkpoint(checkpoint, map_location='cpu')
         model_wrapper = HistoBPNetWrapperV2(args)
         model_wrapper.load_pretrained_chrombpnet(args.chrombpnet_wo_bias)
+    elif model_type == 'histobpnet_v3':
+        if checkpoint is not None:
+            assert checkpoint.endswith('.ckpt')
+            return HistoBPNetWrapperV3.load_from_checkpoint(checkpoint, map_location='cpu')
+        model_wrapper = HistoBPNetWrapperV3(args)
+        model_wrapper.load_pretrained_chrombpnet(args.chrombpnet_wo_bias)
     else:
         raise ValueError(f"Unknown model type: {model_type}") 
 
@@ -273,7 +281,7 @@ def main(instance_id: str):
         assert is_histone(args.model_type), "Train currently only supported for histobpnet"
         best_model_ckpt = train(args, output_dir, logger)
         model = create_model_wrapper(args, checkpoint=best_model_ckpt)
-        predict(args, output_dir, model, logger)
+        predict(args, output_dir, model, logger, chrom="test")
     elif args.command == 'predict':
         model = create_model_wrapper(args, checkpoint=args.checkpoint)
         predict(args, output_dir, model, logger)

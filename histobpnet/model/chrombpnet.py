@@ -1,4 +1,3 @@
-import torch
 import torch.nn as nn
 from histobpnet.model.bpnet import BPNet
 from histobpnet.model.model_config import BPNetModelConfig
@@ -48,9 +47,13 @@ class ChromBPNet(nn.Module):
         self._exp2 = _Exp()
 
         self.n_control_tracks = config.n_control_tracks
+        self.config = config
 
         self.tf_style_reinit()
 
+    def get_model_config(self):
+        return self.config
+    
     def tf_style_reinit(self):
         """
         Re-initializes model weights for Linear and Conv1d layers using

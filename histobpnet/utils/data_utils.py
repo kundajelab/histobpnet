@@ -280,7 +280,7 @@ def get_seq_cts_coords(
     smh_str = "smh" if skip_missing_hist else "nosmh"
 
     if read_cache:
-        temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/seqs_{mode}_{peaks_str}_{str(ctrl_scaling_factor)}.npy"
+        temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/cache/seqs_{mode}_{peaks_str}_{str(ctrl_scaling_factor)}.npy"
         if not os.path.isfile(temp_p):
             seq = get_seq(peaks_df, genome, input_width)
             np.save(temp_p, seq)
@@ -294,7 +294,7 @@ def get_seq_cts_coords(
             file_name = f"cts_{mode}_{peaks_str}_{smh_str}_{str(ctrl_scaling_factor)}_fast.npy"
         else:
             file_name = f"cts_{mode}_{peaks_str}_{smh_str}_fast.npy"
-        temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/{file_name}"
+        temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/cache/{file_name}"
         if not os.path.isfile(temp_p):
             cts = get_cts(
                 peaks_df,
@@ -327,7 +327,7 @@ def get_seq_cts_coords(
                 file_name = f"cts_ctrl_{mode}_{peaks_str}_{smh_str}_{str(ctrl_scaling_factor)}_fast.npy"
             else:
                 file_name = f"cts_ctrl_{mode}_{peaks_str}_{smh_str}_fast.npy"
-            temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/{file_name}"
+            temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/cache/{file_name}"
             if not os.path.isfile(temp_p):
                 cts_ctrl = get_cts(
                     peaks_df,
@@ -718,7 +718,7 @@ def random_crop(seqs, labels, labels_ctrl, seq_crop_width, label_crop_width, coo
         starts
     )
 
-def random_rev_comp(seqs, labels, coords, frac=0.5):
+def random_rev_comp(seqs, labels, labels_ctrl, coords, frac=0.5):
     """
     Data augmentation: applies reverse complement randomly to a fraction of 
     sequences and labels.
@@ -727,14 +727,15 @@ def random_rev_comp(seqs, labels, coords, frac=0.5):
 
     NOTE: Performs in-place modification.
     """
+    assert labels_ctrl is None, "Not implemented for labels_ctrl yet."
     pos_to_rc = np.random.choice(range(seqs.shape[0]), size=int(seqs.shape[0]*frac), replace=False)
     seqs[pos_to_rc] = seqs[pos_to_rc, ::-1, ::-1]
     labels[pos_to_rc] = labels[pos_to_rc, ::-1]
     coords[pos_to_rc,2] =  "r"
 
-    return seqs, labels, coords
+    return seqs, labels, labels_ctrl, coords
 
-def revcomp_shuffle_augment(seqs, labels, coords, add_revcomp, rc_frac=0.5, shuffle=False):
+def revcomp_shuffle_augment(seqs, labels, labels_ctrl, coords, add_revcomp, rc_frac=0.5, shuffle=False):
     """
     seqs: B x IL x 4
     labels: B x OL
@@ -742,19 +743,21 @@ def revcomp_shuffle_augment(seqs, labels, coords, add_revcomp, rc_frac=0.5, shuf
     assert(seqs.shape[0]==labels.shape[0])
 
     # this does not modify seqs and labels
-    mod_seqs, mod_labels, mod_coords = seqs, labels, coords
+    mod_seqs, mod_labels, mod_labels_ctrl, mod_coords = seqs, labels, labels_ctrl, coords
 
     # this modifies mod_seqs, mod_labels in-place
     if add_revcomp:
-        mod_seqs, mod_labels, mod_coords = random_rev_comp(mod_seqs, mod_labels, mod_coords, frac=rc_frac)
+        mod_seqs, mod_labels, mod_labels_ctrl, mod_coords = random_rev_comp(mod_seqs, mod_labels, mod_labels_ctrl, mod_coords, frac=rc_frac)
 
     if shuffle:
         perm = np.random.permutation(mod_seqs.shape[0])
         mod_seqs = mod_seqs[perm]
         mod_labels = mod_labels[perm]
+        if mod_labels_ctrl is not None:
+            mod_labels_ctrl = mod_labels_ctrl[perm]
         mod_coords = mod_coords[perm]
 
-    return mod_seqs, mod_labels, mod_coords
+    return mod_seqs, mod_labels, mod_labels_ctrl, mod_coords
     
 def crop_revcomp_data(
     peak_seqs, peak_cts, peak_cts_ctrl, peak_coords, 
@@ -848,8 +851,8 @@ def crop_revcomp_data(
     # Apply revcomp and shuffle augmentations
     # if rc_frac == 0, there is nothing to revcomp
     if (add_revcomp and rc_frac > 0) or shuffle:
-        seqs, cts, coords = revcomp_shuffle_augment(
-            seqs, cts, coords,
+        seqs, cts, cts_ctrl, coords = revcomp_shuffle_augment(
+            seqs, cts, cts_ctrl, coords,
             add_revcomp, shuffle=shuffle, rc_frac=rc_frac
         )
 

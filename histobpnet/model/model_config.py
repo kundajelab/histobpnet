@@ -77,102 +77,13 @@ class BPNetModelConfig(BaseConfig):
                 self.n_control_tracks = len(self.output_bins)
             elif model_type == "histobpnet_v2":
                 self.n_control_tracks = 1
+            elif model_type == "histobpnet_v3":
+                self.n_control_tracks = 1
 
         if self.n_count_outputs is None:
             if model_type == "histobpnet_v1":
                 self.n_count_outputs = len(self.output_bins)
             elif model_type == "histobpnet_v2":
                 self.n_count_outputs = 1
-
-# class ChromBPNetConfig(BaseConfig):
-#     def __init__(
-#         self,
-#         model_type: str = "chrombpnet",
-#         out_dim: int = 1000,
-#         n_filters: int = 512, 
-#         n_layers: int = 8, 
-#         conv1_kernel_size: int = 21,
-#         profile_kernel_size: int = 75,
-#         n_outputs: int = 1,
-#         n_control_tracks: int = 0, 
-#         profile_output_bias: bool = True, 
-#         count_output_bias: bool = True, 
-#         output_bins: str = None,
-#         **kwargs,
-#     ):
-#         super().__init__(**kwargs)
-
-#         self.model_type = model_type
-#         self.out_dim = out_dim
-#         self.n_filters = n_filters
-#         self.n_layers = n_layers
-#         self.conv1_kernel_size = conv1_kernel_size
-#         self.profile_kernel_size = profile_kernel_size
-#         self.n_outputs = n_outputs
-#         self.n_control_tracks = n_control_tracks
-#         self.profile_output_bias = profile_output_bias
-#         self.count_output_bias = count_output_bias
-#         # TODO_later deal witht his
-#         self.output_bins = output_bins
-
-# class HistoBPNetConfigV1(BaseConfig):
-#     def __init__(
-#         self,
-#         model_type: str = "histobpnet_v1",
-#         out_dim: int = 0,
-#         n_filters: int = 512, 
-#         n_layers: int = 8, 
-#         conv1_kernel_size: int = 21,
-#         profile_kernel_size: int = 0,
-#         n_outputs: int = 1,
-#         profile_output_bias: bool = True, 
-#         count_output_bias: bool = True, 
-#         # TODO_NOW fix bins
-#         output_bins: str = "1000, 2000, 4000, 8000, 16000",
-#         **kwargs,
-#     ):
-#         super().__init__(**kwargs)
-
-#         self.model_type = model_type
-#         self.out_dim = out_dim
-#         self.n_filters = n_filters
-#         self.n_layers = n_layers
-#         self.conv1_kernel_size = conv1_kernel_size
-#         self.profile_kernel_size = profile_kernel_size
-#         self.n_outputs = n_outputs
-#         self.profile_output_bias = profile_output_bias
-#         self.count_output_bias = count_output_bias
-#         self.output_bins = [int(x) for x in output_bins.split(",")]
-#         self.n_control_tracks = len(self.output_bins)
-#         self.n_count_outputs = len(self.output_bins)
-
-# class HistoBPNetConfigV2(BaseConfig):
-#     def __init__(
-#         self,
-#         model_type: str = "histobpnet_v2",
-#         out_dim: int = 0,
-#         n_filters: int = 512, 
-#         n_layers: int = 8, 
-#         conv1_kernel_size: int = 21,
-#         profile_kernel_size: int = 0,
-#         n_outputs: int = 1,
-#         output_bins: str = None,
-#         profile_output_bias: bool = True, 
-#         count_output_bias: bool = True, 
-#         **kwargs,
-#     ):
-#         super().__init__(**kwargs)
-
-#         self.model_type = model_type
-#         self.out_dim = out_dim
-#         self.n_filters = n_filters
-#         self.n_layers = n_layers
-#         self.conv1_kernel_size = conv1_kernel_size
-#         self.profile_kernel_size = profile_kernel_size
-#         self.n_outputs = n_outputs
-#         self.profile_output_bias = profile_output_bias
-#         self.count_output_bias = count_output_bias
-#         self.n_control_tracks = 1
-#         self.n_count_outputs = 1
-#         # TODO_later deal witht his
-#         self.output_bins = output_bins
+            elif model_type == "histobpnet_v3":
+                self.n_count_outputs = 1

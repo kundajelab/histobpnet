@@ -7,9 +7,10 @@ import subprocess
 from toolbox.one_hot import dna_to_one_hot
 
 def is_histone(type_t: str):
-    if type_t not in ['chrombpnet', 'histobpnet_v1', 'histobpnet_v2']:
+    hist_types = ['histobpnet_v1', 'histobpnet_v2', 'histobpnet_v3']
+    if type_t not in ['chrombpnet'] + hist_types:
         raise NotImplementedError(f"Unrecognized type: {type_t}")
-    return type_t in ['histobpnet_v1', 'histobpnet_v2']
+    return type_t in hist_types
 
 def add_peak_id(df, chr_key: str = "chr", start_key: str = "start", end_key: str = "end", inplace: bool = True):
     if inplace:

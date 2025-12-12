@@ -1,5 +1,6 @@
 import torch.nn as nn
 from histobpnet.model.bpnet import BPNet
+from histobpnet.model.model_config import BPNetModelConfig
 
 class HistoBPNetV2(nn.Module):
     """A HistoPNet model.
@@ -7,7 +8,7 @@ class HistoBPNetV2(nn.Module):
 
     def __init__(
         self, 
-        config,
+        config: BPNetModelConfig,
     ):
         super().__init__()
 
@@ -26,9 +27,13 @@ class HistoBPNetV2(nn.Module):
         )
 
         self.n_control_tracks = config.n_control_tracks
-        
+        self.config = config
+
         self.tf_style_reinit()
 
+    def get_model_config(self):
+        return self.config
+    
     def tf_style_reinit(self):
         """
         Re-initializes model weights for Linear and Conv1d layers using

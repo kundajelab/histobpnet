@@ -329,7 +329,7 @@ class BPNet(torch.nn.Module):
             model.fconv.weight = convert_w(w[fname][k])
             model.fconv.bias = convert_b(w[fname][b])
 
-        if model.for_histone not in ('histobpnet_v1', 'histobpnet_v2'):
+        if model.for_histone not in ('histobpnet_v1', 'histobpnet_v2', 'histobpnet_v3'):
             # TODO do we want to / can we partially initialize the weights or something?
             name = namer(prefix, "logcount_predictions")
             model.linear.weight = torch.nn.Parameter(torch.tensor(w[name][k][:].T))

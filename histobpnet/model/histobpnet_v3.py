@@ -2,7 +2,7 @@ import torch.nn as nn
 from histobpnet.model.bpnet import BPNet
 from histobpnet.model.model_config import BPNetModelConfig
 
-class HistoBPNetV1(nn.Module):
+class HistoBPNetV3(nn.Module):
     """A HistoPNet model.
     """
 
@@ -23,18 +23,17 @@ class HistoBPNetV1(nn.Module):
             profile_output_bias = config.profile_output_bias, 
             count_output_bias = config.count_output_bias, 
             n_count_outputs=config.n_count_outputs,
-            for_histone='histobpnet_v1',
+            for_histone='histobpnet_v3',
         )
 
         self.n_control_tracks = config.n_control_tracks
-        self.output_bins = config.output_bins
         self.config = config
 
         self.tf_style_reinit()
 
     def get_model_config(self):
         return self.config
-    
+
     def tf_style_reinit(self):
         """
         Re-initializes model weights for Linear and Conv1d layers using
@@ -42,7 +41,7 @@ class HistoBPNetV1(nn.Module):
         Operates in-place!
         """
         # print("Reinitializing with TF strategy")
-        for m in self.model.modules():
+        for m in self.modules():
             if isinstance(m, nn.Conv1d) or isinstance(m, nn.Linear):
                 if hasattr(m, 'weight') and m.weight is not None:
                     nn.init.xavier_uniform_(m.weight)
@@ -59,15 +58,12 @@ class HistoBPNetV1(nn.Module):
 
         Returns
         -------
-        y_profile: torch.tensor, shape=(batch_size, 1000)
-            The predicted logit profile for each example. Note that this is not
-            a normalized value.
         y_counts: torch.tensor, shape=(batch_size,)
             The predicted log-count for each example.
         observed_ctrl: torch.tensor, shape=(batch_size, n_control_tracks)
-            The observed log of the sum of the (scaled) raw input control counts in each bin.
+            The observed log of the sum of the (scaled) raw input control counts.
         """
-        binned_y_counts = self.bpnet(x, x_ctl_hist=observed_ctrl)
+        y_counts = self.bpnet(x, x_ctl_hist=observed_ctrl)
 
         # DO NOT SQUEEZE y_counts (if applicable), as it is needed for running deep_lift_shap
-        return binned_y_counts
+        return y_counts

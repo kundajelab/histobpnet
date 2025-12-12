@@ -69,9 +69,14 @@ class ModelWrapper(LightningModule):
         """
         return self.model(x, **kwargs)
 
-    # def configure_optimizers(self) -> Union[torch.optim.Optimizer, Dict[str, Any]]:
-    #     raise NotImplementedError("Subclasses must implement this method")
-
+    def get_model_config(self):
+        """Retrieve the model configuration.
+        
+        Returns:
+            Model configuration object
+        """
+        return self.model.get_model_config()
+    
     def configure_optimizers(self) -> Union[torch.optim.Optimizer, Dict[str, Any]]:
         # TODO_NOW validate that self.model will be the right model...
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr, eps=self.optimizer_eps)
