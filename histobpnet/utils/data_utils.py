@@ -280,7 +280,7 @@ def get_seq_cts_coords(
     smh_str = "smh" if skip_missing_hist else "nosmh"
 
     if read_cache:
-        temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/cache/seqs_{mode}_{peaks_str}_{str(ctrl_scaling_factor)}.npy"
+        temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/cache/seqs_{mode}_{peaks_str}_{str(ctrl_scaling_factor)}.npy"
         if not os.path.isfile(temp_p):
             seq = get_seq(peaks_df, genome, input_width)
             np.save(temp_p, seq)
@@ -294,7 +294,7 @@ def get_seq_cts_coords(
             file_name = f"cts_{mode}_{peaks_str}_{smh_str}_{str(ctrl_scaling_factor)}_fast.npy"
         else:
             file_name = f"cts_{mode}_{peaks_str}_{smh_str}_fast.npy"
-        temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/cache/{file_name}"
+        temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/cache/{file_name}"
         if not os.path.isfile(temp_p):
             cts = get_cts(
                 peaks_df,
@@ -327,7 +327,7 @@ def get_seq_cts_coords(
                 file_name = f"cts_ctrl_{mode}_{peaks_str}_{smh_str}_{str(ctrl_scaling_factor)}_fast.npy"
             else:
                 file_name = f"cts_ctrl_{mode}_{peaks_str}_{smh_str}_fast.npy"
-            temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/cache/{file_name}"
+            temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/cache/{file_name}"
             if not os.path.isfile(temp_p):
                 cts_ctrl = get_cts(
                     peaks_df,

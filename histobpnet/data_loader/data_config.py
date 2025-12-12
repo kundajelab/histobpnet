@@ -141,8 +141,9 @@ class DataConfig:
             raise ValueError("Input window size must be positive")
         if self.out_window < 0:
             raise ValueError("Output window size must be positive")
-        if self.in_window < self.out_window:
-            raise ValueError("Input window must be larger than output window")
+        # TODO deal witht this
+        # if (not is_histone(self.model_type)) and (self.in_window < self.out_window):
+        #     raise ValueError("Input window must be larger than output window")
     
     def _validate_chromosomes(self):
         """Validate chromosome configuration."""
