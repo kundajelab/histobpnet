@@ -187,25 +187,28 @@ class ModelWrapper(LightningModule):
             pr = pearson_corr(all_preds.reshape(-1), all_targets.reshape(-1), eps=0)
             self.log(f"{mode}_count_pearson", pr, prog_bar=True, logger=True, sync_dist=True)
 
-            at, ap, aps = all_targets.detach().cpu().numpy(), all_preds.detach().cpu().numpy(), all_peak_status.detach().cpu().numpy()
-            fig, axes = plt.subplots(1, 3, figsize=(30, 5))
-            for i, ax in enumerate(axes):
-                x = at if i == 0 else at[np.where(aps == 1)[0]] if i == 1 else at[np.where(aps == 0)[0]]
-                y = ap if i == 0 else ap[np.where(aps == 1)[0]] if i == 1 else ap[np.where(aps == 0)[0]]
-                suffix = "(All)" if i == 0 else "(Peaks)" if i == 1 else "(Non-peaks)"
-                if len(x) == 0:
-                    continue
-                _, _, _, _, _ = density_scatter(
-                    x,
-                    y,
-                    "Log Count Labels " + suffix,
-                    "Log Count Predictions " + suffix,
-                    s=5,
-                    bins=200,
-                    incl_stats=True,
-                    ax=ax,
-                )
-            self._log_plot(fig, name=f"{mode}_scatter")
+            print(f"{mode} epoch end: sanity_checking={self.trainer.sanity_checking}", flush=True)
+            if (self.trainer.sanity_checking is not None) and (not self.trainer.sanity_checking):
+                print(f"{mode} epoch end: here", flush=True)
+                at, ap, aps = all_targets.detach().cpu().numpy(), all_preds.detach().cpu().numpy(), all_peak_status.detach().cpu().numpy()
+                fig, axes = plt.subplots(1, 3, figsize=(30, 5))
+                for i, ax in enumerate(axes):
+                    x = at if i == 0 else at[np.where(aps == 1)[0]] if i == 1 else at[np.where(aps == 0)[0]]
+                    y = ap if i == 0 else ap[np.where(aps == 1)[0]] if i == 1 else ap[np.where(aps == 0)[0]]
+                    suffix = "(All)" if i == 0 else "(Peaks)" if i == 1 else "(Non-peaks)"
+                    if len(x) == 0:
+                        continue
+                    _, _, _, _, _ = density_scatter(
+                        x,
+                        y,
+                        "Log Count Labels " + suffix,
+                        "Log Count Predictions " + suffix,
+                        s=5,
+                        bins=200,
+                        incl_stats=True,
+                        ax=ax,
+                    )
+                self._log_plot(fig, name=f"{mode}_scatter")
         else:
             # Calculate and log correlation per bin
             assert all_preds.shape[1] == len(self.model.output_bins), "Mismatch between number of output bins and predictions"
@@ -247,6 +250,10 @@ class ModelWrapper(LightningModule):
                     wandb_logger = logger
                     break
         if wandb_logger:
+            # I passed step=self.trainer.global_step so I could select epoch as x in wandb
+            # but it seems to cause issues with logging val_ and train_scatters, only renders
+            # the former, not sure why
+            # wandb_logger.experiment.log({name: wandb.Image(fig)}, step=self.trainer.global_step)
             wandb_logger.experiment.log({name: wandb.Image(fig)})
             if close_fig:
                 plt.close(fig)
@@ -265,6 +272,7 @@ def adjust_bias_model_logcounts(bias_model, dataloader, verbose=False, device=1)
     """
     print("Adjusting bias model counts")
     bias_model.eval()
+    delta = []
     with torch.no_grad():
         bias_model.to('cuda')
         for batch in tqdm(dataloader):
@@ -275,12 +283,7 @@ def adjust_bias_model_logcounts(bias_model, dataloader, verbose=False, device=1)
             _delta = true_counts.mean(-1) - pred_counts.mean(-1)
             delta.append(_delta)
         delta = torch.cat(delta, dim=0).mean()
-        # bpnet_wrapper = BPNetWrapper(args)
-        # bpnet_wrapper.model = bias_model
-        # output = L.Trainer(logger=False, devices=device).predict(bpnet_wrapper, dataloader)
-        # parsed_output = {key: np.concatenate([batch[key] for batch in output]) for key in output[0]}
-        # delta = parsed_output['true_count'].mean(-1) - parsed_output['pred_count'].mean(-1)
-        # delta = torch.cat([predictions['delta'] for predictions in predictions], dim=0).mean()
+        bias_model.linear.bias += torch.Tensor(delta).to(bias_model.linear.bias.device)
 
     if verbose:
         print('### delta', delta, flush=True)

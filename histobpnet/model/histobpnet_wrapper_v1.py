@@ -42,7 +42,6 @@ class HistoBPNetWrapperV1(ModelWrapper):
         self.metrics[mode]['targets'].append(true_binned_logsum)
         self.metrics[mode]['peak_status'].append(batch['peak_status'])
 
-        # TODO_NOW does mse in log space make sense? that's what bpnet does though (see def _step)
         mse_elements = (y_count - true_binned_logsum) ** 2     # shape: (batch_size, n_bins)
         count_loss = mse_elements.mean()
         loss = count_loss
@@ -77,7 +76,7 @@ class HistoBPNetWrapperV1(ModelWrapper):
         ctl_sums_mat  = torch.stack(ctl_sums, dim=1)    # (batch_size, num_bins)
 
         # log of summed counts per bin
-        # TODO_NOW log or log1p?... here and below. bpnet does log1p (see def count_head and def _step)
+        # TODO log or log1p?... here and below. bpnet does log1p (see def count_head and def _step)
         true_binned_logsum = torch.log(true_sums_mat + eps)
 
         # log fold change per bin: log(sum_t / sum_ctl)

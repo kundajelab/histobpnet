@@ -64,7 +64,6 @@ class BPNetModelConfig(BaseConfig):
 
         if self.output_bins is None:
             if model_type == "histobpnet_v1":
-                # TODO_NOW fix bins
                 self.output_bins = "1000, 2000, 4000, 8000, 16000"
 
         if self.output_bins is not None:

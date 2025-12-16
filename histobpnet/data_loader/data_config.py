@@ -157,5 +157,5 @@ class DataConfig:
             raise ValueError("Some excluded chromosomes are not in the training/validation/test sets")
     
     def _validate_model_type(self):
-        if self.model_type not in ['profile'] and not is_histone(self.model_type):
+        if self.model_type not in ['chrombpnet'] and not is_histone(self.model_type):
             raise ValueError(f"Unrecognized model_type: {self.model_type}")

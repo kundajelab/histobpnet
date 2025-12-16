@@ -47,7 +47,8 @@ class BaseBPNetWrapper(ModelWrapper):
             profile_pearson = pearson_corr(y_profile.softmax(-1), true_profile).mean()
             self.log_dict(
                 {f"{mode}_profile_pearson": profile_pearson},
-                on_step=False,
+                # TODO change back to on_step=False later -- here and below
+                on_step=True,
                 on_epoch=True,
                 prog_bar=True,
                 logger=True,
@@ -63,7 +64,7 @@ class BaseBPNetWrapper(ModelWrapper):
             f'{mode}_profile_loss': profile_loss,
             f'{mode}_count_loss': count_loss,
         }
-        self.log_dict(dict_show, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+        self.log_dict(dict_show, on_step=True, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
 
         return loss
 
@@ -125,7 +126,7 @@ class ChromBPNetWrapper(BaseBPNetWrapper):
         self.model = ChromBPNet(config)
         self.model_type = config.model_type
 
-    def load_pretrained_chrombpnet(self, bias_scaled_path: str = None, chrombpnet_wo_bias_path: str = None, instance=None):
+    def load_pretrained_chrombpnet(self, bias_scaled_path: str = None, chrombpnet_wo_bias_path: str = None, instance=None, dataloader=None):
         """Load pretrained weights for bias and ChromBPNet without bias.
 
         Args:
@@ -133,6 +134,6 @@ class ChromBPNetWrapper(BaseBPNetWrapper):
             chrombpnet_wo_bias_path: Path to the pretrained ChromBPNet model without bias
         """
         if bias_scaled_path is not None:
-            self.model.bias = self.init_bias(bias_scaled_path, instance=self.model.bias)
+            self.model.bias = self.init_bias(bias_scaled_path, instance=self.model.bias, dataloader=dataloader)
         if chrombpnet_wo_bias_path is not None:
             self.model.model = self.init_chrombpnet_wo_bias(chrombpnet_wo_bias_path, freeze=False, instance=self.model.model)

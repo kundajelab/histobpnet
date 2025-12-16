@@ -26,7 +26,8 @@ from histobpnet.utils.general_utils import is_histone, add_peak_id
 from histobpnet.data_loader.data_config import DataConfig
 
 def validate_mode(mode: str):
-    assert mode in ['train', 'val', 'test', 'chrom'], "Invalid mode. Must be one of ['train', 'val', 'test', 'chrom']"
+    valids = ['train', 'val', 'test', 'chrom', 'negative']
+    assert mode in valids, f"Invalid mode: {mode}. Must be one of {valids}"
 
 class DataModule(L.LightningDataModule):
     """DataModule for loading and processing genomic data for training and evaluation.
@@ -248,11 +249,8 @@ class DataModule(L.LightningDataModule):
             num_workers=self.config.num_workers, 
         )
 
-    # TODO_later review
     def negative_dataloader(self):
-        raise NotImplementedError("Raising this for now so I know when it's called + review it")
-    
-        self.negative_dataset = self.dataset_class(
+        negative_dataset = self.dataset_class(
             peak_regions=self.negatives,
             nonpeak_regions=None,
             genome_fasta=self.config.fasta,
@@ -263,12 +261,19 @@ class DataModule(L.LightningDataModule):
             cts_bw_file=self.config.bigwig,
             cts_ctrl_bw_file=self.config.bigwig_ctrl,
             output_bins=self.config.output_bins,
+            atac_hgp_map=self.config.atac_hgp_map,
+            skip_missing_hist=self.config.skip_missing_hist,
             add_revcomp=False,
             return_coords=False,
             shuffle_at_epoch_start=False,
+            debug=self.config.debug,
+            rc_frac=self.config.rc_frac,
+            mode='negative',
+            ctrl_scaling_factor=self.config.ctrl_scaling_factor,
+            config=self.config,
         )
         return torch.utils.data.DataLoader(
-            self.negative_dataset, 
+            negative_dataset, 
             batch_size=self.config.batch_size, 
             shuffle=False, 
             num_workers=self.config.num_workers, 
@@ -569,6 +574,7 @@ class HistoBPNetDatasetV2(ChromBPNetDataset):
         negative_sampling_ratio=-1, 
         cts_bw_file=None, 
         cts_ctrl_bw_file=None,
+        output_bins="",
         atac_hgp_map="",
         skip_missing_hist=False,
         add_revcomp=False, 

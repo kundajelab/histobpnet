@@ -305,6 +305,8 @@ class BPNet(torch.nn.Module):
             model = BPNet(n_layers=n_layers, n_filters=n_filters, n_outputs=1,
                 n_control_tracks=0)
         else:
+            assert instance.n_layers == n_layers
+            assert instance.n_filters == n_filters
             model = instance
 
         convert_w = lambda x: torch.nn.Parameter(torch.tensor(

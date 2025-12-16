@@ -41,7 +41,10 @@ def get_parsers():
     parser.add_argument('--chrombpnet_wo_bias', type=str, default=None,
                        help='ChromBPNet model without bias')
     parser.add_argument('--checkpoint', type=str, default=None,
-                       help='Path to model checkpoint (.ckpt) for prediction/interpretation')
+                       help='Path to model checkpoint (.ckpt) for prediction/interpretation. If chrombpnet, this ckpt must' \
+                       'include both the bias model and the accessibility model (bias_scaled and chrombpnet_wo_bias args are' \
+                       'ignored if checkpoint is not None). Alternatively, provide bias_scaled and chrombpnet_wo_bias separately' \
+                       'and leave checkpoint as None.')
     parser.add_argument('--verbose', action='store_true',
                        help='Verbose output')
     # TODO_later: is this actually used anywhere?
@@ -74,6 +77,7 @@ def get_parsers():
     return parser
 
 def validate_args(args_d: dict):
+    # TODO validate that checkpoint ends in .ckpt if provided
     pass
 
 def setup(instance_id: str):
@@ -114,15 +118,23 @@ def setup(instance_id: str):
     return args, output_dir, logger
 
 def train(args, output_dir: str, logger):
-    assert is_histone(args.model_type), "Train currently only supported for histobpnet"
     logger.add_to_log(f"Training with model type: {args.model_type}")
 
     data_config = DataConfig.from_argparse_args(args)
     data_config.set_additional_args(args.output_bins, args.model_type)
 
     datamodule = DataModule(data_config, len(args.gpu))
-    args.alpha = 1
-    model_wrapper = create_model_wrapper(args)
+    negative_dl = None
+    if is_histone(args.model_type):
+        args.alpha = 1
+    elif args.model_type == 'chrombpnet':
+        args.alpha = datamodule.median_count / 10
+        negative_dl = datamodule.negative_dataloader() if args.adjust_bias else None
+    else:
+        raise ValueError(f"Unknown model type: {args.model_type}")
+    model_wrapper = create_model_wrapper(args, dataloader=negative_dl)
+
+    logger.add_to_log(f"Model config: {args}")
 
     pt_output_dir = os.path.join(output_dir, "pt_artifacts")
     os.makedirs(pt_output_dir, exist_ok=False)
@@ -168,6 +180,8 @@ def train(args, output_dir: str, logger):
         # for other models I guess it might make sense to store a list or dict of sub-Modules and then save all
         # those here?
         torch.save(model_wrapper.model.bpnet.state_dict(), os.path.join(ckpt_dir, f'{args.model_type}.pt'))
+        # TODO fix
+        # torch.save(model.model.model.state_dict(), os.path.join(out_dir, 'checkpoints/chrombpnet_wo_bias.pt'))
 
     # return the path to the best_model.ckpt
     return os.path.join(trainer.checkpoint_callback.dirpath, 'best_model.ckpt')
@@ -238,7 +252,7 @@ def interpret(args, args_d, model, datamodule=None):
     # os.makedirs(os.path.join(out_dir, 'interpret'), exist_ok=True)
     # np.save(os.path.join(out_dir, 'interpret', 'mutagenesis.npy'), out)
 
-def create_model_wrapper(args, checkpoint: str = None):
+def create_model_wrapper(args, checkpoint: str = None, dataloader = None):
     """Factory function to create appropriate model wrapper.
     """
     model_type = args.model_type.lower()
@@ -248,9 +262,11 @@ def create_model_wrapper(args, checkpoint: str = None):
     elif model_type == 'chrombpnet':
         if checkpoint is not None:
             assert checkpoint.endswith('.ckpt')
+            # TODO do we need to call adjust_bias_model_log_counts here, or can it be already included in the checkpoint?
             return ChromBPNetWrapper.load_from_checkpoint(checkpoint, map_location='cpu')
         model_wrapper = ChromBPNetWrapper(args)
-        model_wrapper.load_pretrained_chrombpnet(args.bias_scaled, args.chrombpnet_wo_bias)
+        # TODO do we need to call adjust_bias_model_log_counts here, or can it be already included in the checkpoint?
+        model_wrapper.load_pretrained_chrombpnet(args.bias_scaled, args.chrombpnet_wo_bias, dataloader = dataloader)
     elif model_type == 'histobpnet_v1':
         if checkpoint is not None:
             assert checkpoint.endswith('.ckpt')
@@ -278,9 +294,8 @@ def main(instance_id: str):
     args, output_dir, logger = setup(instance_id)
 
     if args.command == 'train':
-        assert is_histone(args.model_type), "Train currently only supported for histobpnet"
         best_model_ckpt = train(args, output_dir, logger)
-        model = create_model_wrapper(args, checkpoint=best_model_ckpt)
+        # model = create_model_wrapper(args, checkpoint=best_model_ckpt)
         predict(args, output_dir, model, logger, chrom="test")
     elif args.command == 'predict':
         model = create_model_wrapper(args, checkpoint=args.checkpoint)
@@ -298,7 +313,9 @@ if __name__ == '__main__':
     instance_id = get_instance_id()
     print(f"*** Using instance_id: {instance_id}")
 
-    set_random_seed(seed=42, skip_tf=True)
+    # set_random_seed(seed=42, skip_tf=True)
+    # set_random_seed(seed=1234, skip_tf=True)
+    L.seed_everything(1234)
     t0 = time.time()
     logger = main(instance_id)
     tt = time.time() - t0
