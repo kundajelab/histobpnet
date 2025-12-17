@@ -1,6 +1,6 @@
-import torch
 import torch.nn as nn
 from histobpnet.model.bpnet import BPNet
+from histobpnet.model.model_config import BPNetModelConfig
 from histobpnet.utils.general_utils import _Log, _Exp
 
 # adapted from BPNet in bpnet-lite, credit goes to Jacob Schreiber <jmschreiber91@gmail.com>
@@ -12,11 +12,14 @@ class ChromBPNet(nn.Module):
 
     def __init__(
         self, 
-        config,
+        config: BPNetModelConfig,
     ):
         super().__init__()
 
-        # TODO call this acc instead of model
+        import lightning as L
+        L.seed_everything(1234)
+
+        # TODO_later call this acc instead of model
         self.model = BPNet(
             n_filters = config.n_filters, 
             n_layers = config.n_layers, 
@@ -47,9 +50,13 @@ class ChromBPNet(nn.Module):
         self._exp2 = _Exp()
 
         self.n_control_tracks = config.n_control_tracks
+        self.config = config
 
         self.tf_style_reinit()
 
+    def get_model_config(self):
+        return self.config
+    
     def tf_style_reinit(self):
         """
         Re-initializes model weights for Linear and Conv1d layers using
@@ -57,6 +64,8 @@ class ChromBPNet(nn.Module):
         Operates in-place!
         """
         # print("Reinitializing with TF strategy")
+        # the initialization is only for accessibility model (self.model), since the bias is often trained separately
+        # and loaded directly. If that's not the case, however, we may want to init both. TODO
         for m in self.model.modules():
             if isinstance(m, nn.Conv1d) or isinstance(m, nn.Linear):
                 if hasattr(m, 'weight') and m.weight is not None:

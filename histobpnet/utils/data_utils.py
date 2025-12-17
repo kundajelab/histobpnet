@@ -1,3 +1,4 @@
+import gc
 import numpy as np
 import pandas as pd
 import pyBigWig
@@ -5,6 +6,7 @@ import pyfaidx
 import os
 from toolbox.logger import cprint
 from toolbox.one_hot import dna_to_one_hot
+from histobpnet.utils.general_utils import add_peak_id
 
 def html_to_pdf(input_html, output_pdf):
     from weasyprint import HTML, CSS
@@ -23,11 +25,10 @@ def read_chrom_sizes(fname):
 
     return gs
 
-# format_region modifies the start and end columns of a DataFrame
+# center_region_around_summit modifies the start and end columns of a DataFrame
 # to center the region around the summit and set the width to a specified value.
 # It also sets the summit to be half of the width.
-# A better name for this function could be `center_region_around_summit`.
-def format_region(df, width=500):
+def center_region_around_summit(df, width):
     df.loc[:, 'start'] = df.loc[:, 'start'].astype(np.int64) + df.loc[:, 'summit'] - width // 2
     df.loc[:, 'end'] = df.loc[:, 'start'] + width 
     df.loc[:, 'summit'] = width // 2
@@ -54,7 +55,18 @@ def expand_3col_to_10col(df):
     df['summit'] = df['summit'].astype(int)
     return df
 
-def load_region_df(regions_bed, chrom_sizes=None, in_window=2114, shift=0, is_peak: bool=True, logger=None, width=500):
+# width used to default to 500, Lei said the only reason he added that was for RegNet so I've removed it
+def load_region_df(
+    regions_bed,
+    chrom_sizes=None,
+    in_window=2114,
+    shift=0,
+    is_peak: bool=True,
+    logger=None,
+    width=None,
+    skip_missing_hist=False,
+    atac_hgp_map="",
+):
     """
     Load the DataFrame and, optionally, filter regions in it that exceed defined chromosome sizes.
     """
@@ -87,20 +99,44 @@ def load_region_df(regions_bed, chrom_sizes=None, in_window=2114, shift=0, is_pe
         filtered_df = df
     filtered_df.columns = ['chr', 'start', 'end', 'name', 'score', 'strand', 'signalValue', 'pValue', 'qValue', 'summit', 'is_peak']
 
+    width = width if width is not None else in_window
     cprint(f"Formatting {filtered_df.shape[0]} regions from {regions_bed} using width {width}.", logger=logger)
-    filtered_df = format_region(filtered_df, width=width)
+    filtered_df = center_region_around_summit(filtered_df, width)
 
     # Reset index to avoid index errors
-    return filtered_df.reset_index(drop=True)
+    filtered_df = filtered_df.reset_index(drop=True)
 
-def subsample_nonpeak_data(nonpeak_seqs, nonpeak_cts, nonpeak_coords, peak_data_size, negative_sampling_ratio):
+    add_peak_id(filtered_df)
+
+    # filter out any regions that dont have a matching histone peak
+    if skip_missing_hist:
+        assert atac_hgp_map != ""
+        atac_hgp_df = pd.read_csv(atac_hgp_map, sep="\t", header=0)
+        add_peak_id(atac_hgp_df, chr_key="chrom")
+        merged = filtered_df.merge(
+            atac_hgp_df[["peak_id", "hist_chrom", "hist_start", "hist_end"]],
+            on="peak_id",
+            how="left"
+        )
+        if len(merged) != len(filtered_df):
+            raise ValueError("Some peaks in filtered_df have multiple matches in atac_hgp_df based on peak_id.")
+        idx = merged[merged['hist_chrom'] != '.'].index
+        pct_filtered = 100 * (len(filtered_df) - len(idx)) / len(filtered_df)
+        cprint(f"Filtering out {len(filtered_df) - len(idx)} regions ({pct_filtered:.2f}%) with no matching histone peak.", logger=logger)
+        filtered_df = filtered_df.loc[idx].reset_index(drop=True)
+
+    return filtered_df
+
+def subsample_nonpeak_data(nonpeak_seqs, nonpeak_cts, nonpeak_cts_ctrl, nonpeak_coords, peak_data_size, negative_sampling_ratio):
     # Randomly samples a portion of the non-peak data to use in training
     num_nonpeak_samples = int(negative_sampling_ratio * peak_data_size)
     nonpeak_indices_to_keep = np.random.choice(len(nonpeak_seqs), size=min(num_nonpeak_samples, len(nonpeak_seqs)), replace=False)
     nonpeak_seqs = nonpeak_seqs[nonpeak_indices_to_keep]
     nonpeak_cts = nonpeak_cts[nonpeak_indices_to_keep]
+    if nonpeak_cts_ctrl is not None:
+        nonpeak_cts_ctrl = nonpeak_cts_ctrl[nonpeak_indices_to_keep]
     nonpeak_coords = nonpeak_coords[nonpeak_indices_to_keep]
-    return nonpeak_seqs, nonpeak_cts, nonpeak_coords
+    return nonpeak_seqs, nonpeak_cts, nonpeak_cts_ctrl, nonpeak_coords
 
 def concat_peaks_and_subsampled_negatives(peaks, negatives=None, negative_sampling_ratio=0.1):
     if negatives is None:
@@ -124,7 +160,15 @@ def split_peak_and_nonpeak(data):
     peaks = data[data['is_peak']].copy()
     return peaks, non_peaks
 
-def get_cts(peaks_df, bw, width):
+def get_cts(
+    peaks_df,
+    bw,
+    width,
+    atac_hgp_df=None,
+    get_total_cts: bool = False,
+    skip_missing_hist: bool = False,
+    ctrl_scaling_factor: float = 1.0,
+):
     """
     Fetches values from a bigwig bw, given a df with minimally
     chr, start and summit columns. Summit is relative to start.
@@ -135,11 +179,61 @@ def get_cts(peaks_df, bw, width):
     return shape: (len(peaks_df), width)
     """
     vals = []
-    for _, r in peaks_df.iterrows():
-        vals.append(np.nan_to_num(bw.values(r['chr'], 
+
+    if atac_hgp_df is not None:
+        u = (atac_hgp_df["end"] - atac_hgp_df["start"]).unique()
+        assert u.shape[0] == 1, "All ATAC-Histone mapping regions must have the same length."
+        peak_len_a = u[0]
+        u2 = (peaks_df["end"] - peaks_df["start"]).unique()
+        assert u2.shape[0] == 1, "All ATAC peaks must have the same length."
+        peak_len_b = u2[0]
+        assert peak_len_a == peak_len_b, "ATAC-Histone mapping regions must have the same length as ATAC peaks."
+
+        merged = peaks_df.merge(
+            atac_hgp_df[["peak_id", "hist_chrom", "hist_start", "hist_end"]],
+            on="peak_id",
+            how="left"
+        )
+        if len(merged) != len(peaks_df):
+            raise ValueError("Some peaks in peaks_df have multiple matches in atac_hgp_df based on peak_id.")
+        for _, r in merged.iterrows():
+            if pd.isna(r['hist_chrom']):
+                raise ValueError(f"No matching ATAC-Histone mapping found for region: {r['chr']}:{r['start']}-{r['end']}")
+            elif r.hist_chrom == '.':
+                assert not skip_missing_hist, "skip_missing_hist is True but found missing histone peak."
+                if get_total_cts:
+                    vals.append(np.array([0]))
+                else:
+                    vals.append(np.zeros(width))
+            else:
+                if not get_total_cts:
+                    assert ctrl_scaling_factor == 1.0, "Not yet implemented...."
+                    raw = bw.values(r.hist_chrom, r.hist_start, r.hist_end)
+                    # pad to width w/ 0
+                    padded = np.zeros(width, dtype=float)
+                    padded[:len(raw)] = raw
+                    # TODO_later should prob make this a sparse matrix. also validate 
+                    vals.append(np.nan_to_num(padded))
+                else:
+                    vals.append(np.array([
+                        ctrl_scaling_factor * np.nansum(bw.values(r.hist_chrom, r.hist_start, r.hist_end))
+                    ]))
+    else:
+        for _, r in peaks_df.iterrows():
+            if not get_total_cts:
+                assert ctrl_scaling_factor == 1.0, "Not yet implemented...."
+                vals.append(
+                    np.nan_to_num(bw.values(r['chr'],
                                             r['start'] + r['summit'] - width//2,
-                                            r['start'] + r['summit'] + width//2)))
-        
+                                            r['start'] + r['summit'] + width//2))
+                )
+            else:
+                vals.append(np.array([
+                    ctrl_scaling_factor * np.nansum(bw.values(r['chr'],
+                                                            r['start'] + r['summit'] - width//2,
+                                                            r['start'] + r['summit'] + width//2))
+                ]))
+
     return np.array(vals)
 
 def get_seq(peaks_df, genome, width):
@@ -164,13 +258,120 @@ def get_coords(peaks_df, peaks_bool):
 
     return np.array(vals)
 
-def get_seq_cts_coords(peaks_df, genome, bw, input_width, output_width, peaks_bool):
-    seq = get_seq(peaks_df, genome, input_width)
-    cts = get_cts(peaks_df, bw, output_width)
-    coords = get_coords(peaks_df, peaks_bool)
-    return seq, cts, coords
+def get_seq_cts_coords(
+    peaks_df,
+    genome,
+    bw,
+    bw_ctrl,
+    input_width,
+    output_width,
+    peaks_bool,
+    atac_hgp_df=None,
+    get_total_cts: bool = False,
+    skip_missing_hist: bool = False,
+    mode: str = "",
+    ctrl_scaling_factor: float = 1.0,
+):
+    read_cache = False
+    print("Reading from cache:", read_cache)
 
-def load_data(bed_regions, nonpeak_regions, genome_fasta, cts_bw_file, inputlen, outputlen, max_jitter):
+    # TODO_later remove this after im done debugging
+    peaks_str = "peaks" if peaks_bool==1 else "nonpeaks"
+    smh_str = "smh" if skip_missing_hist else "nosmh"
+
+    if read_cache:
+        temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/cache/seqs_{mode}_{peaks_str}_{str(ctrl_scaling_factor)}.npy"
+        if not os.path.isfile(temp_p):
+            seq = get_seq(peaks_df, genome, input_width)
+            np.save(temp_p, seq)
+        else:
+            seq = np.load(temp_p)
+    else:
+        seq = get_seq(peaks_df, genome, input_width)
+
+    if read_cache:
+        if ctrl_scaling_factor != 1.0:
+            file_name = f"cts_{mode}_{peaks_str}_{smh_str}_{str(ctrl_scaling_factor)}_fast.npy"
+        else:
+            file_name = f"cts_{mode}_{peaks_str}_{smh_str}_fast.npy"
+        temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/cache/{file_name}"
+        if not os.path.isfile(temp_p):
+            cts = get_cts(
+                peaks_df,
+                bw,
+                output_width,
+                atac_hgp_df=atac_hgp_df,
+                get_total_cts=get_total_cts,
+                skip_missing_hist=skip_missing_hist,
+                ctrl_scaling_factor=ctrl_scaling_factor,
+            )
+            np.save(temp_p, cts)
+        else:
+            cts = np.load(temp_p)
+    else:
+        cts = get_cts(
+                peaks_df,
+                bw,
+                output_width,
+                atac_hgp_df=atac_hgp_df,
+                get_total_cts=get_total_cts,
+                skip_missing_hist=skip_missing_hist,
+                ctrl_scaling_factor=ctrl_scaling_factor,
+            )
+
+    if bw_ctrl is None:
+        cts_ctrl = None
+    else:
+        if read_cache:
+            if ctrl_scaling_factor != 1.0:
+                file_name = f"cts_ctrl_{mode}_{peaks_str}_{smh_str}_{str(ctrl_scaling_factor)}_fast.npy"
+            else:
+                file_name = f"cts_ctrl_{mode}_{peaks_str}_{smh_str}_fast.npy"
+            temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/cache/{file_name}"
+            if not os.path.isfile(temp_p):
+                cts_ctrl = get_cts(
+                    peaks_df,
+                    bw_ctrl,
+                    output_width,
+                    atac_hgp_df=atac_hgp_df,
+                    get_total_cts=get_total_cts,
+                    skip_missing_hist=skip_missing_hist,
+                    ctrl_scaling_factor=ctrl_scaling_factor,
+                )
+                np.save(temp_p, cts_ctrl)
+            else:
+                cts_ctrl = np.load(temp_p)
+        else:
+            cts_ctrl = get_cts(
+                peaks_df,
+                bw_ctrl,
+                output_width,
+                atac_hgp_df=atac_hgp_df,
+                get_total_cts=get_total_cts,
+                skip_missing_hist=skip_missing_hist,
+                ctrl_scaling_factor=ctrl_scaling_factor,
+            )
+
+    coords = get_coords(peaks_df, peaks_bool)
+    return seq, cts, cts_ctrl, coords
+
+def load_data(
+    bed_regions,
+    nonpeak_regions,
+    genome_fasta,
+    cts_bw_file,
+    inputlen,
+    outputlen,
+    max_jitter,
+    cts_ctrl_bw_file = None,
+    output_bins = None,
+    atac_hgp_df = None,
+    get_total_cts = False,
+    skip_missing_hist = False,
+    mode: str = "",
+    ctrl_scaling_factor: float = 1.0,
+    outputlen_neg: int = None,
+):
     """
     Load sequences and corresponding base resolution counts for training, 
     validation regions in peaks and nonpeaks (2 x 2 x 2 = 8 matrices).
@@ -181,42 +382,82 @@ def load_data(bed_regions, nonpeak_regions, genome_fasta, cts_bw_file, inputlen,
     data.
     """
     cts_bw = pyBigWig.open(cts_bw_file)
+    cts_ctrl_bw = pyBigWig.open(cts_ctrl_bw_file) if cts_ctrl_bw_file is not None else None
     genome = pyfaidx.Fasta(genome_fasta)
 
+    if output_bins is not None:
+        output_bins = [int(x) for x in output_bins.split(",")]
+        output_len = max(output_bins)
+        output_len_neg = output_len
+    elif atac_hgp_df is not None:
+        output_len = (atac_hgp_df['hist_end'] - atac_hgp_df['hist_start']).max()
+        # we'll use this for nonpeak regions since we dont know what a "good" outputlen should be
+        output_len_neg = int((atac_hgp_df['hist_end'] - atac_hgp_df['hist_start']).mean()) if outputlen_neg is None else outputlen_neg
+    else:
+        output_len = outputlen
+        output_len_neg = output_len
+    
     # peaks
     train_peaks_seqs=None
     train_peaks_cts=None
+    train_peaks_cts_ctrl=None
     train_peaks_coords=None
     # nonpeaks
     train_nonpeaks_seqs=None
     train_nonpeaks_cts=None
+    train_nonpeaks_cts_ctrl=None
     train_nonpeaks_coords=None
 
     if bed_regions is not None:
         if not set(['chr', 'start', 'summit']).issubset(bed_regions.columns):
             bed_regions = expand_3col_to_10col(bed_regions)
-        train_peaks_seqs, train_peaks_cts, train_peaks_coords = get_seq_cts_coords(bed_regions,
-                                                                                   genome,
-                                                                                   cts_bw,
-                                                                                   inputlen+2*max_jitter,
-                                                                                   outputlen+2*max_jitter,
-                                                                                   peaks_bool=1)
+        train_peaks_seqs, train_peaks_cts, train_peaks_cts_ctrl, train_peaks_coords = get_seq_cts_coords(
+            bed_regions,
+            genome,
+            cts_bw,
+            cts_ctrl_bw,
+            inputlen+2*max_jitter,
+            output_len+2*max_jitter,
+            peaks_bool=1,
+            atac_hgp_df=atac_hgp_df,
+            get_total_cts=get_total_cts,
+            skip_missing_hist=skip_missing_hist,
+            mode=mode,
+            ctrl_scaling_factor=ctrl_scaling_factor,
+        )
     
     if nonpeak_regions is not None:
         if not set(['chr', 'start', 'summit']).issubset(nonpeak_regions.columns):
             nonpeak_regions = expand_3col_to_10col(nonpeak_regions)
-        train_nonpeaks_seqs, train_nonpeaks_cts, train_nonpeaks_coords = get_seq_cts_coords(nonpeak_regions,
-                                                                                            genome,
-                                                                                            cts_bw,
-                                                                                            inputlen,
-                                                                                            outputlen,
-                                                                                            peaks_bool=0)
+        # no reason to pass atac_hgp_df here since nonpeaks shouldn't have entries in that df
+        train_nonpeaks_seqs, train_nonpeaks_cts, train_nonpeaks_cts_ctrl, train_nonpeaks_coords = get_seq_cts_coords(
+            nonpeak_regions,
+            genome,
+            cts_bw,
+            cts_ctrl_bw,
+            inputlen,
+            output_len_neg,
+            peaks_bool=0,
+            get_total_cts=get_total_cts,
+            skip_missing_hist=skip_missing_hist,
+            mode=mode,
+            ctrl_scaling_factor=ctrl_scaling_factor,
+        )
 
     cts_bw.close()
+    if cts_ctrl_bw is not None:
+        cts_ctrl_bw.close()
     genome.close()
 
-    return (train_peaks_seqs, train_peaks_cts, train_peaks_coords,
-            train_nonpeaks_seqs, train_nonpeaks_cts, train_nonpeaks_coords)
+    if (train_peaks_seqs.sum(axis=-1) == 1).all():
+        print('One-hot encoding verified for peak sequences.')
+    else:
+        # TODO figure out why this happens -> see get_seq in data_utils.py
+        # I guess some of the corresponding sequences have letters other than ACGT?
+        print('Warning: Peak sequences are not one-hot encoded?!')
+
+    return (train_peaks_seqs, train_peaks_cts, train_peaks_cts_ctrl, train_peaks_coords,
+            train_nonpeaks_seqs, train_nonpeaks_cts, train_nonpeaks_cts_ctrl, train_nonpeaks_coords)
 
 # valeh: I skimmed through this
 def write_bigwig(
@@ -428,7 +669,7 @@ def take_per_row(A, indx, num_elem):
     # we can't do A[:, all_indx] for some reason but this syntax below wokrs as expected
     return A[np.arange(all_indx.shape[0])[:,None], all_indx]
 
-def random_crop(seqs, labels, seq_crop_width, label_crop_width, coords):
+def random_crop(seqs, labels, labels_ctrl, seq_crop_width, label_crop_width, coords):
     """
     Takes sequences and corresponding counts labels. They should have the same
     # of examples. The widths would correspond to inputlen and outputlen respectively,
@@ -440,12 +681,14 @@ def random_crop(seqs, labels, seq_crop_width, label_crop_width, coords):
     """
     assert(seqs.shape[1] >= seq_crop_width)
     assert(labels.shape[1] >= label_crop_width)
+    if labels_ctrl is not None:
+        assert(labels_ctrl.shape[1] >= label_crop_width)
 
     # here is a graphic illustrating this
     #
     # |<------ seq_width ------>|
     #   |<--- label_width --->|
-    # seq_width - alpha = label_width (alpha is "crop // 2")
+    # seq_width - alpha = label_width (alpha is "crop")
     #
     # after cropping both seq and label:
     # |<------ seq_crop_width ------>|
@@ -459,16 +702,23 @@ def random_crop(seqs, labels, seq_crop_width, label_crop_width, coords):
     # seq_width - seq_crop_width = label_width - label_crop_width
     #
     assert(seqs.shape[1] - seq_crop_width == labels.shape[1] - label_crop_width)
+    if labels_ctrl is not None:
+        assert(seqs.shape[1] - seq_crop_width == labels_ctrl.shape[1] - label_crop_width)
 
-    # TODO: pretty sure max_start should be "(seqs.shape[1] - seq_crop_width) // 2"?
     max_start = seqs.shape[1] - seq_crop_width
     starts = np.random.choice(range(max_start+1), size=seqs.shape[0], replace=True)
     new_coords = coords.copy()
     new_coords[:,1] = new_coords[:,1].astype(int) - (seqs.shape[1]//2) + starts
 
-    return take_per_row(seqs, starts, seq_crop_width), take_per_row(labels, starts, label_crop_width), new_coords
+    return (
+        take_per_row(seqs, starts, seq_crop_width),
+        take_per_row(labels, starts, label_crop_width),
+        take_per_row(labels_ctrl, starts, label_crop_width) if labels_ctrl is not None else None,
+        new_coords,
+        starts
+    )
 
-def random_rev_comp(seqs, labels, coords, frac=0.5):
+def random_rev_comp(seqs, labels, labels_ctrl, coords, frac=0.5):
     """
     Data augmentation: applies reverse complement randomly to a fraction of 
     sequences and labels.
@@ -477,14 +727,15 @@ def random_rev_comp(seqs, labels, coords, frac=0.5):
 
     NOTE: Performs in-place modification.
     """
+    assert labels_ctrl is None, "Not implemented for labels_ctrl yet."
     pos_to_rc = np.random.choice(range(seqs.shape[0]), size=int(seqs.shape[0]*frac), replace=False)
     seqs[pos_to_rc] = seqs[pos_to_rc, ::-1, ::-1]
     labels[pos_to_rc] = labels[pos_to_rc, ::-1]
     coords[pos_to_rc,2] =  "r"
 
-    return seqs, labels, coords
+    return seqs, labels, labels_ctrl, coords
 
-def revcomp_shuffle_augment(seqs, labels, coords, add_revcomp, rc_frac=0.5, shuffle=False):
+def revcomp_shuffle_augment(seqs, labels, labels_ctrl, coords, add_revcomp, rc_frac=0.5, shuffle=False):
     """
     seqs: B x IL x 4
     labels: B x OL
@@ -492,24 +743,29 @@ def revcomp_shuffle_augment(seqs, labels, coords, add_revcomp, rc_frac=0.5, shuf
     assert(seqs.shape[0]==labels.shape[0])
 
     # this does not modify seqs and labels
-    mod_seqs, mod_labels, mod_coords = seqs, labels, coords
+    mod_seqs, mod_labels, mod_labels_ctrl, mod_coords = seqs, labels, labels_ctrl, coords
 
     # this modifies mod_seqs, mod_labels in-place
     if add_revcomp:
-        mod_seqs, mod_labels, mod_coords = random_rev_comp(mod_seqs, mod_labels, mod_coords, frac=rc_frac)
+        mod_seqs, mod_labels, mod_labels_ctrl, mod_coords = random_rev_comp(mod_seqs, mod_labels, mod_labels_ctrl, mod_coords, frac=rc_frac)
 
     if shuffle:
         perm = np.random.permutation(mod_seqs.shape[0])
         mod_seqs = mod_seqs[perm]
         mod_labels = mod_labels[perm]
+        if mod_labels_ctrl is not None:
+            mod_labels_ctrl = mod_labels_ctrl[perm]
         mod_coords = mod_coords[perm]
 
-    return mod_seqs, mod_labels, mod_coords
-
+    return mod_seqs, mod_labels, mod_labels_ctrl, mod_coords
+    
 def crop_revcomp_data(
-    peak_seqs, peak_cts, peak_coords, 
-    nonpeak_seqs=None, nonpeak_cts=None, nonpeak_coords=None, 
-    inputlen=2114, outputlen=1000, add_revcomp=False, negative_sampling_ratio=0.1, shuffle=False):
+    peak_seqs, peak_cts, peak_cts_ctrl, peak_coords, 
+    nonpeak_seqs=None, nonpeak_cts=None, nonpeak_cts_ctrl=None, nonpeak_coords=None, 
+    per_bin_peak_cts_dict=None, per_bin_peak_cts_ctrl_dict=None,
+    per_bin_nonpeak_cts_dict=None, per_bin_nonpeak_cts_ctrl_dict=None,
+    inputlen=2114, outputlen=1000, output_bins: list = None,
+    add_revcomp=False, negative_sampling_ratio=0.1, shuffle=False, do_crop=True, rc_frac: float=0.5):
     """Apply random cropping and reverse complement augmentation to the data.
         
         This method:
@@ -518,45 +774,86 @@ def crop_revcomp_data(
         3. Applies reverse complement augmentation if enabled
         4. Shuffles data if shuffle is True
     """
+    def crop_peak_data():
+        if output_bins is None:
+            cropped_peaks, cropped_cnts, cropped_cnts_ctrl, cropped_coords, _ = random_crop(
+                peak_seqs, peak_cts, peak_cts_ctrl, inputlen, outputlen, peak_coords
+            ) if do_crop else (peak_seqs, peak_cts, peak_cts_ctrl, peak_coords, None)
+            return cropped_peaks, cropped_cnts, cropped_cnts_ctrl, cropped_coords
+        else:
+            # I dont expect a path where do_crop is False and output_bins is not None
+            assert do_crop
+            cropped_cnts = {}
+            cropped_cnts_ctrl = {}
+            starts = None
+            for w in output_bins:
+                if starts is None:
+                    cropped_peaks, cropped_cnts[w], cropped_cnts_ctrl[w], cropped_coords, starts = random_crop(
+                        peak_seqs, per_bin_peak_cts_dict[w], per_bin_peak_cts_ctrl_dict[w], inputlen, w, peak_coords
+                    )
+                else:
+                    cropped_cnts[w] = take_per_row(per_bin_peak_cts_dict[w], starts, w)
+                    cropped_cnts_ctrl[w] = take_per_row(per_bin_peak_cts_ctrl_dict[w], starts, w)
+            return cropped_peaks, cropped_cnts, cropped_cnts_ctrl, cropped_coords
+
     if (peak_seqs is not None) and (nonpeak_seqs is not None):
         # Crop peak data
-        cropped_peaks, cropped_cnts, cropped_coords = random_crop(
-            peak_seqs, peak_cts, inputlen, outputlen, peak_coords
-        )
+        cropped_peaks, cropped_cnts, cropped_cnts_ctrl, cropped_coords = crop_peak_data()
         
         # Sample negative examples
-        # valeh: why is this needed btw? dont we do this during pre-processing?
+        # valeh: why is this needed btw? dont we do this during pre-processing? -> I think this is for further
+        # subsampling during training. What we do during pre-proc (when building GC-matched negatvies) is different,
+        # it's not meant for handling class imbalance during training.
         if negative_sampling_ratio > 0:
-            sampled_nonpeak_seqs, sampled_nonpeak_cts, sampled_nonpeak_coords = subsample_nonpeak_data(
-                nonpeak_seqs, nonpeak_cts, nonpeak_coords,
+            if output_bins is not None:
+                raise NotImplementedError("Subsampling non-peak data with output bins is not implemented yet.")
+            sampled_nonpeak_seqs, sampled_nonpeak_cts, sampled_nonpeak_cts_ctrl, sampled_nonpeak_coords = subsample_nonpeak_data(
+                nonpeak_seqs, nonpeak_cts, nonpeak_cts_ctrl, nonpeak_coords,
                 len(peak_seqs), negative_sampling_ratio
             )
             seqs = np.vstack([cropped_peaks, sampled_nonpeak_seqs])
-            cts = np.vstack([cropped_cnts, sampled_nonpeak_cts])
             coords = np.vstack([cropped_coords, sampled_nonpeak_coords])
+            cts = np.vstack([cropped_cnts, sampled_nonpeak_cts])
+            cts_ctrl = None if nonpeak_cts_ctrl is None else np.vstack([cropped_cnts_ctrl, sampled_nonpeak_cts_ctrl])
+            peak_status = np.array([1]*len(cropped_peaks) + [0]*len(sampled_nonpeak_seqs)).reshape(-1,1)
         else:
             seqs = np.vstack([cropped_peaks, nonpeak_seqs])
-            cts = np.vstack([cropped_cnts, nonpeak_cts])
             coords = np.vstack([cropped_coords, nonpeak_coords])
+
+            if output_bins is None:
+                cts = np.vstack([cropped_cnts, nonpeak_cts])
+                cts_ctrl = None if nonpeak_cts_ctrl is None else np.vstack([cropped_cnts_ctrl, nonpeak_cts_ctrl])
+            else:
+                # concatenate dicts
+                cts, cts_ctrl = {}, {}
+                for w in output_bins:
+                    cts[w] = np.vstack([cropped_cnts[w], per_bin_nonpeak_cts_dict[w]])
+                    cts_ctrl[w] = np.vstack([cropped_cnts_ctrl[w], per_bin_nonpeak_cts_ctrl_dict[w]])
+            peak_status = np.array([1]*len(cropped_peaks) + [0]*len(nonpeak_seqs)).reshape(-1,1)
     elif peak_seqs is not None:
         # Only peak data
-        cropped_peaks, cropped_cnts, cropped_coords = random_crop(
-            peak_seqs, peak_cts, inputlen, outputlen, peak_coords
-        )
+        cropped_peaks, cropped_cnts, cropped_cnts_ctrl, cropped_coords = crop_peak_data()
         seqs = cropped_peaks
-        cts = cropped_cnts
         coords = cropped_coords
+        cts = cropped_cnts
+        cts_ctrl = cropped_cnts_ctrl
+        peak_status = np.array([1]*len(cropped_peaks)).reshape(-1,1)
     elif nonpeak_seqs is not None:
         # Only non-peak data
         seqs = nonpeak_seqs
-        cts = nonpeak_cts
         coords = nonpeak_coords
+        cts = nonpeak_cts if output_bins is None else per_bin_nonpeak_cts_dict
+        cts_ctrl = nonpeak_cts_ctrl if output_bins is None else per_bin_nonpeak_cts_ctrl_dict
+        peak_status = np.array([0]*len(nonpeak_seqs)).reshape(-1,1)
     else:
         raise ValueError("Both peak and non-peak arrays are empty")
 
     # Apply revcomp and shuffle augmentations
-    seqs, cts, coords = revcomp_shuffle_augment(
-        seqs, cts, coords,
-        add_revcomp, shuffle=shuffle
-    )
-    return seqs, cts, coords
+    # if rc_frac == 0, there is nothing to revcomp
+    if (add_revcomp and rc_frac > 0) or shuffle:
+        seqs, cts, cts_ctrl, coords = revcomp_shuffle_augment(
+            seqs, cts, cts_ctrl, coords,
+            add_revcomp, shuffle=shuffle, rc_frac=rc_frac
+        )
+
+    return seqs, cts, cts_ctrl, coords, peak_status

@@ -4,7 +4,21 @@ import torch.nn.functional as F
 import pyfaidx
 import warnings
 import subprocess
-from .data_utils import dna_to_one_hot
+from toolbox.one_hot import dna_to_one_hot
+
+def is_histone(type_t: str):
+    hist_types = ['histobpnet_v1', 'histobpnet_v2', 'histobpnet_v3']
+    if type_t not in ['chrombpnet'] + hist_types:
+        raise NotImplementedError(f"Unrecognized type: {type_t}")
+    return type_t in hist_types
+
+def add_peak_id(df, chr_key: str = "chr", start_key: str = "start", end_key: str = "end", inplace: bool = True):
+    if inplace:
+        df["peak_id"] = df[chr_key].astype(str) + ":" + df[start_key].astype(str) + "-" + df[end_key].astype(str)
+    else:
+        df_copy = df.copy()
+        df_copy["peak_id"] = df_copy[chr_key].astype(str) + ":" + df_copy[start_key].astype(str) + "-" + df_copy[end_key].astype(str)
+        return df_copy
 
 def to_numpy(tensor: torch.Tensor) -> np.ndarray:
     return tensor.detach().cpu().numpy()

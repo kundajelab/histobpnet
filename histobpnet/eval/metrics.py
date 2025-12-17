@@ -59,8 +59,10 @@ def load_output_to_regions(output, regions, out_dir: str):
     """
     Load the output to regions
     """
+    # regions includes peaks and non-peaks
     regions = regions.reset_index(drop=True).copy()
     parsed_output = {key: np.concatenate([batch[key] for batch in output]) for key in output[0]}
+    # cast 'is_peak' to int if it exists
     if 'is_peak' in regions.columns:
         regions['is_peak'] = regions['is_peak'].astype(int)
     regions['pred_count'] = parsed_output['pred_count']
@@ -68,7 +70,7 @@ def load_output_to_regions(output, regions, out_dir: str):
     regions.to_csv(os.path.join(out_dir, 'regions.csv'), sep='\t', index=False)
     return regions, parsed_output
 
-def compare_with_observed(regions, parsed_output, out_dir: str, tag='all_regions'):
+def compare_with_observed(regions, parsed_output, out_dir: str, tag='all_regions', skip_profile: bool = False):
     metrics_dictionary = {}
 
     # save count metrics (peaks and nonpeaks)
@@ -84,17 +86,19 @@ def compare_with_observed(regions, parsed_output, out_dir: str, tag='all_regions
     metrics_dictionary["counts_metrics"]["peaks_and_nonpeaks"]["mse"] = mse
 
     # save profile metrics (peaks and nonpeaks)
-    metrics_dictionary["profile_metrics"] = {}
-    jsd_pw, jsd_norm, jsd_rnd, _ = profile_metrics(
-        parsed_output['true_profile'],
-        softmax(parsed_output['pred_profile'])
-    )
-    plot_histogram(jsd_pw, jsd_rnd, os.path.join(out_dir, 'all_regions_jsd'), '')
-    metrics_dictionary["profile_metrics"]["peaks_and_nonpeaks"] = {}
-    metrics_dictionary["profile_metrics"]["peaks_and_nonpeaks"]["median_jsd"] = np.nanmedian(jsd_pw)        
-    metrics_dictionary["profile_metrics"]["peaks_and_nonpeaks"]["median_norm_jsd"] = np.nanmedian(jsd_norm)
+    if not skip_profile:
+        metrics_dictionary["profile_metrics"] = {}
+        jsd_pw, jsd_norm, jsd_rnd, _ = profile_metrics(
+            parsed_output['true_profile'],
+            softmax(parsed_output['pred_profile'])
+        )
+        plot_histogram(jsd_pw, jsd_rnd, os.path.join(out_dir, 'all_regions_jsd'), '')
+        metrics_dictionary["profile_metrics"]["peaks_and_nonpeaks"] = {}
+        metrics_dictionary["profile_metrics"]["peaks_and_nonpeaks"]["median_jsd"] = np.nanmedian(jsd_pw)        
+        metrics_dictionary["profile_metrics"]["peaks_and_nonpeaks"]["median_norm_jsd"] = np.nanmedian(jsd_norm)
 
     if 'is_peak' in regions.columns:
+        # PEAK REGIONS
         peak_regions = regions[regions['is_peak'] == 1].copy()
         peak_index = peak_regions.index
         peak_regions = peak_regions.reset_index(drop=True)
@@ -110,15 +114,17 @@ def compare_with_observed(regions, parsed_output, out_dir: str, tag='all_regions
         metrics_dictionary["counts_metrics"]["peaks"]["pearsonr"] = pearson_cor
         metrics_dictionary["counts_metrics"]["peaks"]["mse"] = mse
 
-        jsd_pw, jsd_norm, jsd_rnd, _ = profile_metrics(
-            parsed_output['true_profile'][peak_index],
-            softmax(parsed_output['pred_profile'])[peak_index]
-        )
-        plot_histogram(jsd_pw, jsd_rnd, os.path.join(out_dir, 'peaks_jsd'), '')
-        metrics_dictionary["profile_metrics"]["peaks"] = {}
-        metrics_dictionary["profile_metrics"]["peaks"]["median_jsd"] = np.nanmedian(jsd_pw)        
-        metrics_dictionary["profile_metrics"]["peaks"]["median_norm_jsd"] = np.nanmedian(jsd_norm)
+        if not skip_profile:
+            jsd_pw, jsd_norm, jsd_rnd, _ = profile_metrics(
+                parsed_output['true_profile'][peak_index],
+                softmax(parsed_output['pred_profile'])[peak_index]
+            )
+            plot_histogram(jsd_pw, jsd_rnd, os.path.join(out_dir, 'peaks_jsd'), '')
+            metrics_dictionary["profile_metrics"]["peaks"] = {}
+            metrics_dictionary["profile_metrics"]["peaks"]["median_jsd"] = np.nanmedian(jsd_pw)        
+            metrics_dictionary["profile_metrics"]["peaks"]["median_norm_jsd"] = np.nanmedian(jsd_norm)
 
+        # NON-PEAK REGIONS
         nonpeak_regions = regions[regions['is_peak']==0].copy()
         nonpeak_index = nonpeak_regions.index
         nonpeak_regions = nonpeak_regions.reset_index(drop=True)
@@ -134,14 +140,15 @@ def compare_with_observed(regions, parsed_output, out_dir: str, tag='all_regions
         metrics_dictionary["counts_metrics"]["nonpeaks"]["pearsonr"] = pearson_cor
         metrics_dictionary["counts_metrics"]["nonpeaks"]["mse"] = mse
 
-        jsd_pw, jsd_norm, jsd_rnd, _ = profile_metrics(
-            parsed_output['true_profile'][nonpeak_index],
-            softmax(parsed_output['pred_profile'])[nonpeak_index]
-        )
-        plot_histogram(jsd_pw, jsd_rnd, os.path.join(out_dir, 'nonpeaks_jsd'), '')
-        metrics_dictionary["profile_metrics"]["nonpeaks"] = {}
-        metrics_dictionary["profile_metrics"]["nonpeaks"]["median_jsd"] = np.nanmedian(jsd_pw)        
-        metrics_dictionary["profile_metrics"]["nonpeaks"]["median_norm_jsd"] = np.nanmedian(jsd_norm)
+        if not skip_profile:
+            jsd_pw, jsd_norm, jsd_rnd, _ = profile_metrics(
+                parsed_output['true_profile'][nonpeak_index],
+                softmax(parsed_output['pred_profile'])[nonpeak_index]
+            )
+            plot_histogram(jsd_pw, jsd_rnd, os.path.join(out_dir, 'nonpeaks_jsd'), '')
+            metrics_dictionary["profile_metrics"]["nonpeaks"] = {}
+            metrics_dictionary["profile_metrics"]["nonpeaks"]["median_jsd"] = np.nanmedian(jsd_pw)
+            metrics_dictionary["profile_metrics"]["nonpeaks"]["median_norm_jsd"] = np.nanmedian(jsd_norm)
 
     print(json.dumps(metrics_dictionary, indent=4, default=lambda o: float(o)))
 
@@ -154,7 +161,6 @@ def counts_metrics(
     preds,
     outf: str = None,
     fontsize = 20,
-    # TODO why log? we predict log counts?
     xlab = 'Log Count Labels',
     ylab = 'Log Count Predictions'
 ):
