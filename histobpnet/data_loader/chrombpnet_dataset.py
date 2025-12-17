@@ -4,7 +4,6 @@ import pandas as pd
 from histobpnet.utils.data_utils import (
     load_data,
     crop_revcomp_data,
-    debug_subsample,
 )
 from histobpnet.data_loader.data_config import DataConfig
 
@@ -23,17 +22,13 @@ class ChromBPNetDataset(torch.utils.data.Dataset):
         self, 
         peak_regions, 
         nonpeak_regions, 
-        genome_fasta, 
-        inputlen=2114, 
-        outputlen=1000, 
-        max_jitter=0, 
-        negative_sampling_ratio=0.1, 
-        cts_bw_file=None, 
-        add_revcomp=False, 
-        return_coords=False,    
-        shuffle_at_epoch_start=False, 
-        rc_frac=0.5,
-        debug=False,
+        config: DataConfig,
+        inputlen: int, 
+        outputlen: int, 
+        max_jitter: int, 
+        negative_sampling_ratio: float, 
+        shuffle_at_epoch_start: bool, 
+        rc_frac: float,
         mode: str = "",
         **kwargs
     ):
@@ -42,27 +37,19 @@ class ChromBPNetDataset(torch.utils.data.Dataset):
         Args:
             peak_regions: DataFrame containing peak regions
             nonpeak_regions: DataFrame containing non-peak regions
-            genome_fasta: Path to genome FASTA file
             inputlen: Length of input sequences
             outputlen: Length of output sequences
             max_jitter: Maximum jitter for random cropping
             negative_sampling_ratio: Ratio of negative samples to use
-            cts_bw_file: Path to bigwig file containing counts
-            add_revcomp: Whether to add reverse complement augmentation
-            return_coords: Whether to return coordinates
             shuffle_at_epoch_start: Whether to shuffle at epoch start
             **kwargs: Additional keyword arguments
         """
-        if debug:
-            peak_regions = debug_subsample(peak_regions)
-            nonpeak_regions = debug_subsample(nonpeak_regions)
-
         validate_mode(mode)
 
         # Load data
         self.peak_seqs, self.peak_cts, _, self.peak_coords, \
         self.nonpeak_seqs, self.nonpeak_cts, _, self.nonpeak_coords = load_data(
-            peak_regions, nonpeak_regions, genome_fasta, cts_bw_file,
+            peak_regions, nonpeak_regions, config.fasta, config.bigwig,
             inputlen, outputlen, max_jitter, mode=mode,
         )
 
@@ -70,13 +57,8 @@ class ChromBPNetDataset(torch.utils.data.Dataset):
         self.negative_sampling_ratio = negative_sampling_ratio
         self.inputlen = inputlen
         self.outputlen = outputlen
-        self.add_revcomp = add_revcomp
-        self.return_coords = return_coords
         self.shuffle_at_epoch_start = shuffle_at_epoch_start
         self.rc_frac = rc_frac
-        self.max_jitter = max_jitter
-        self.genome_fasta = genome_fasta
-        self.cts_bw_file = cts_bw_file
 
         if nonpeak_regions is not None:
             self.regions = pd.concat([peak_regions, nonpeak_regions], ignore_index=True)
@@ -104,7 +86,6 @@ class ChromBPNetDataset(torch.utils.data.Dataset):
             self.nonpeak_seqs, self.nonpeak_cts, None, self.nonpeak_coords,
             inputlen=self.inputlen,
             outputlen=self.outputlen,
-            add_revcomp=self.add_revcomp,
             negative_sampling_ratio=self.negative_sampling_ratio,
             shuffle=self.shuffle_at_epoch_start,
             rc_frac=self.rc_frac,

@@ -272,85 +272,27 @@ def get_seq_cts_coords(
     mode: str = "",
     ctrl_scaling_factor: float = 1.0,
 ):
-    read_cache = False
-    print("Reading from cache:", read_cache)
+    seq = get_seq(peaks_df, genome, input_width)
 
-    # TODO_later remove this after im done debugging
-    peaks_str = "peaks" if peaks_bool==1 else "nonpeaks"
-    smh_str = "smh" if skip_missing_hist else "nosmh"
+    cts = get_cts(
+        peaks_df,
+        bw,
+        output_width,
+        atac_hgp_df=atac_hgp_df,
+        get_total_cts=get_total_cts,
+        skip_missing_hist=skip_missing_hist,
+        ctrl_scaling_factor=ctrl_scaling_factor,
+    )
 
-    if read_cache:
-        temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/cache/seqs_{mode}_{peaks_str}_{str(ctrl_scaling_factor)}.npy"
-        if not os.path.isfile(temp_p):
-            seq = get_seq(peaks_df, genome, input_width)
-            np.save(temp_p, seq)
-        else:
-            seq = np.load(temp_p)
-    else:
-        seq = get_seq(peaks_df, genome, input_width)
-
-    if read_cache:
-        if ctrl_scaling_factor != 1.0:
-            file_name = f"cts_{mode}_{peaks_str}_{smh_str}_{str(ctrl_scaling_factor)}_fast.npy"
-        else:
-            file_name = f"cts_{mode}_{peaks_str}_{smh_str}_fast.npy"
-        temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/cache/{file_name}"
-        if not os.path.isfile(temp_p):
-            cts = get_cts(
-                peaks_df,
-                bw,
-                output_width,
-                atac_hgp_df=atac_hgp_df,
-                get_total_cts=get_total_cts,
-                skip_missing_hist=skip_missing_hist,
-                ctrl_scaling_factor=ctrl_scaling_factor,
-            )
-            np.save(temp_p, cts)
-        else:
-            cts = np.load(temp_p)
-    else:
-        cts = get_cts(
-                peaks_df,
-                bw,
-                output_width,
-                atac_hgp_df=atac_hgp_df,
-                get_total_cts=get_total_cts,
-                skip_missing_hist=skip_missing_hist,
-                ctrl_scaling_factor=ctrl_scaling_factor,
-            )
-
-    if bw_ctrl is None:
-        cts_ctrl = None
-    else:
-        if read_cache:
-            if ctrl_scaling_factor != 1.0:
-                file_name = f"cts_ctrl_{mode}_{peaks_str}_{smh_str}_{str(ctrl_scaling_factor)}_fast.npy"
-            else:
-                file_name = f"cts_ctrl_{mode}_{peaks_str}_{smh_str}_fast.npy"
-            temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/cache/{file_name}"
-            if not os.path.isfile(temp_p):
-                cts_ctrl = get_cts(
-                    peaks_df,
-                    bw_ctrl,
-                    output_width,
-                    atac_hgp_df=atac_hgp_df,
-                    get_total_cts=get_total_cts,
-                    skip_missing_hist=skip_missing_hist,
-                    ctrl_scaling_factor=ctrl_scaling_factor,
-                )
-                np.save(temp_p, cts_ctrl)
-            else:
-                cts_ctrl = np.load(temp_p)
-        else:
-            cts_ctrl = get_cts(
-                peaks_df,
-                bw_ctrl,
-                output_width,
-                atac_hgp_df=atac_hgp_df,
-                get_total_cts=get_total_cts,
-                skip_missing_hist=skip_missing_hist,
-                ctrl_scaling_factor=ctrl_scaling_factor,
-            )
+    cts_ctrl = get_cts(
+        peaks_df,
+        bw_ctrl,
+        output_width,
+        atac_hgp_df=atac_hgp_df,
+        get_total_cts=get_total_cts,
+        skip_missing_hist=skip_missing_hist,
+        ctrl_scaling_factor=ctrl_scaling_factor,
+    ) if bw_ctrl is not None else None
 
     coords = get_coords(peaks_df, peaks_bool)
     return seq, cts, cts_ctrl, coords
@@ -645,17 +587,6 @@ def hdf5_to_bigwig(
         use_tqdm=tqdm
     )
 
-def debug_subsample(peak_regions, chrom=None):
-    if peak_regions is None:
-        return None
-
-    if chrom is None:
-        chrom = peak_regions['chr'].unique()[0]
-
-    peak_regions = peak_regions[peak_regions['chr'] == chrom]
-    # print('debugging on ', chrom, 'shape', peak_regions.shape)
-    return peak_regions.reset_index(drop=True)
-
 # https://stackoverflow.com/questions/46091111/python-slice-array-at-different-position-on-every-row
 def take_per_row(A, indx, num_elem):
     """
@@ -727,27 +658,25 @@ def random_rev_comp(seqs, labels, labels_ctrl, coords, frac=0.5):
 
     NOTE: Performs in-place modification.
     """
+    assert frac > 0
     assert labels_ctrl is None, "Not implemented for labels_ctrl yet."
     pos_to_rc = np.random.choice(range(seqs.shape[0]), size=int(seqs.shape[0]*frac), replace=False)
     seqs[pos_to_rc] = seqs[pos_to_rc, ::-1, ::-1]
     labels[pos_to_rc] = labels[pos_to_rc, ::-1]
     coords[pos_to_rc,2] =  "r"
 
-    return seqs, labels, labels_ctrl, coords
-
-def revcomp_shuffle_augment(seqs, labels, labels_ctrl, coords, add_revcomp, rc_frac=0.5, shuffle=False):
+def revcomp_shuffle_augment(seqs, labels, labels_ctrl, coords, rc_frac=0.5, shuffle=False):
     """
     seqs: B x IL x 4
     labels: B x OL
     """
     assert(seqs.shape[0]==labels.shape[0])
 
-    # this does not modify seqs and labels
     mod_seqs, mod_labels, mod_labels_ctrl, mod_coords = seqs, labels, labels_ctrl, coords
 
-    # this modifies mod_seqs, mod_labels in-place
-    if add_revcomp:
-        mod_seqs, mod_labels, mod_labels_ctrl, mod_coords = random_rev_comp(mod_seqs, mod_labels, mod_labels_ctrl, mod_coords, frac=rc_frac)
+    if rc_frac > 0:
+        # this modifies in-place!!
+        random_rev_comp(mod_seqs, mod_labels, mod_labels_ctrl, mod_coords, frac=rc_frac)
 
     if shuffle:
         perm = np.random.permutation(mod_seqs.shape[0])
@@ -765,7 +694,7 @@ def crop_revcomp_data(
     per_bin_peak_cts_dict=None, per_bin_peak_cts_ctrl_dict=None,
     per_bin_nonpeak_cts_dict=None, per_bin_nonpeak_cts_ctrl_dict=None,
     inputlen=2114, outputlen=1000, output_bins: list = None,
-    add_revcomp=False, negative_sampling_ratio=0.1, shuffle=False, do_crop=True, rc_frac: float=0.5):
+    negative_sampling_ratio=0.1, shuffle=False, do_crop=True, rc_frac: float=0.5):
     """Apply random cropping and reverse complement augmentation to the data.
         
         This method:
@@ -849,11 +778,9 @@ def crop_revcomp_data(
         raise ValueError("Both peak and non-peak arrays are empty")
 
     # Apply revcomp and shuffle augmentations
-    # if rc_frac == 0, there is nothing to revcomp
-    if (add_revcomp and rc_frac > 0) or shuffle:
-        seqs, cts, cts_ctrl, coords = revcomp_shuffle_augment(
-            seqs, cts, cts_ctrl, coords,
-            add_revcomp, shuffle=shuffle, rc_frac=rc_frac
-        )
+    seqs, cts, cts_ctrl, coords = revcomp_shuffle_augment(
+        seqs, cts, cts_ctrl, coords,
+        shuffle=shuffle, rc_frac=rc_frac
+    )
 
     return seqs, cts, cts_ctrl, coords, peak_status
