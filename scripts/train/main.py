@@ -19,6 +19,7 @@ from histobpnet.model.bpnet_wrapper import BPNetWrapper, ChromBPNetWrapper
 from histobpnet.model.histobpnet_wrapper_v1 import HistoBPNetWrapperV1
 from histobpnet.model.histobpnet_wrapper_v2 import HistoBPNetWrapperV2
 from histobpnet.model.histobpnet_wrapper_v3 import HistoBPNetWrapperV3
+from histobpnet.model.model_wrappers import adjust_bias_model_logcounts
 
 def get_parsers():
     parser = argparse.ArgumentParser()
@@ -124,17 +125,32 @@ def train(args, output_dir: str, logger):
     data_config.set_additional_args(args.output_bins, args.model_type)
 
     datamodule = DataModule(data_config, len(args.gpu))
-    negative_dl = None
+    # negative_dl = None
     if is_histone(args.model_type):
         args.alpha = 1
     elif args.model_type == 'chrombpnet':
         args.alpha = datamodule.median_count / 10
-        negative_dl = datamodule.negative_dataloader() if args.adjust_bias else None
+        # negative_dl = datamodule.negative_dataloader() if args.adjust_bias else None
     else:
         raise ValueError(f"Unknown model type: {args.model_type}")
-    model_wrapper = create_model_wrapper(args, dataloader=negative_dl)
+    # model_wrapper = create_model_wrapper(args, dataloader=negative_dl)
+    model_wrapper = create_model_wrapper(args, dataloader=None)
 
-    logger.add_to_log(f"Model config: {args}")
+    # if args.model_type == 'chrombpnet':
+    #     logger.add_to_log("---- bias model parameters pre adj ----")
+    #     for name, param in model_wrapper.model.bias.named_parameters():
+    #         logger.add_to_log(f"{name}: {param.data}")
+
+    if args.adjust_bias:
+        adjust_bias_model_logcounts(model_wrapper.model.bias, datamodule.negative_dataloader())
+
+    # logger.add_to_log("---- acc model parameters ----")
+    # for name, param in model_wrapper.model.model.named_parameters():
+    #     logger.add_to_log(f"{name}: {param.data}")
+
+    # logger.add_to_log("---- bias model parameters ----")
+    # for name, param in model_wrapper.model.bias.named_parameters():
+    #     logger.add_to_log(f"{name}: {param.data}")
 
     pt_output_dir = os.path.join(output_dir, "pt_artifacts")
     os.makedirs(pt_output_dir, exist_ok=False)
@@ -151,7 +167,7 @@ def train(args, output_dir: str, logger):
         # run validation only at the end of each epoch
         val_check_interval=None,
         # https://chatgpt.com/s/t_6930903a25608191b8ebbcb3242ae142
-        strategy=DDPStrategy(find_unused_parameters=False),
+        # strategy=DDPStrategy(find_unused_parameters=False),
         # So if early stopping kicks in after (say) epoch 17, then:
         # best_model.ckpt will be from the epoch with lowest val_loss up to epoch 17
         # last.ckpt will be the model as it was at epoch 17, the early-stopped point

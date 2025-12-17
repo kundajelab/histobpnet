@@ -47,8 +47,7 @@ class BaseBPNetWrapper(ModelWrapper):
             profile_pearson = pearson_corr(y_profile.softmax(-1), true_profile).mean()
             self.log_dict(
                 {f"{mode}_profile_pearson": profile_pearson},
-                # TODO change back to on_step=False later -- here and below
-                on_step=True,
+                on_step=False,
                 on_epoch=True,
                 prog_bar=True,
                 logger=True,
@@ -64,7 +63,7 @@ class BaseBPNetWrapper(ModelWrapper):
             f'{mode}_profile_loss': profile_loss,
             f'{mode}_count_loss': count_loss,
         }
-        self.log_dict(dict_show, on_step=True, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+        self.log_dict(dict_show, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
 
         return loss
 
