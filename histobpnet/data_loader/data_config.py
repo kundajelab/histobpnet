@@ -17,31 +17,45 @@ class DataConfig:
     
     def __init__(
         self,
-        data_dir: str = None,
+        # catch-all for args that we cannot add as standalone kwargs because
+        # they clash with an arg of the same name in BPNetodelConfig
+        extra_kwargs: dict = None,
+        # these are parameters with common default values
         peaks: str = None,
         negatives: str = None,
         bigwig: str = None,
         bigwig_ctrl: str = None,
-        negative_sampling_ratio: float = 0.1,
-        saved_data: str = None,
         fasta: str = None,
         chrom_sizes: str = None,
+        saved_data: str = None,
+        negative_sampling_ratio: float = 0.1,
         fold: int = 0,
         genome: str = 'hg38',
         in_window: int = 2114,
-        out_window: int = 1000,
         atac_hgp_map: str = None,
-        skip_missing_hist: bool = False,
-        ctrl_scaling_factor: float = 1.0,
-        outputlen_neg: int = None,
         shift: int = 500,
         rc_frac: float = 0.5,
         outlier_threshold: float = 0.999,
+        skip_missing_hist: bool = False,
         exclude_chroms: List = None,
         batch_size: int = 64,
-        num_workers: int = 32,
+        num_workers: int = 16,
         debug: bool = False,
+        # these are parameters whose default values can vary based on model_type
+        out_window: int = None,
+        ctrl_scaling_factor: float = None,
+        outputlen_neg: int = None,
     ):
+        assert "model_type" in extra_kwargs
+        self.model_type = extra_kwargs["model_type"]
+    
+        assert "output_bins" in extra_kwargs
+        self.output_bins = extra_kwargs["output_bins"]
+        if self.output_bins is not None:
+            bins = [int(b.strip()) for b in self.output_bins.split(',')]
+            if any(b <= 0 for b in bins):
+                raise ValueError("All output bins must be positive integers")
+
         if genome == 'hg38':
             _genome = hg38
             _datasets = hg38_datasets()
@@ -51,10 +65,9 @@ class DataConfig:
         else:
             raise ValueError(f"Unsupported genome: {genome}")
         
-        self.data_dir = data_dir
-        self.peaks = peaks if peaks is not None else f'{data_dir}/peaks.bed'
-        self.negatives = negatives if negatives is not None else f'{data_dir}/negatives.bed'
-        self.bigwig = bigwig if bigwig is not None else f'{data_dir}/unstranded.bw'
+        self.peaks = peaks
+        self.negatives = negatives
+        self.bigwig = bigwig
         self.bigwig_ctrl = bigwig_ctrl
         
         self.fasta = fasta if fasta is not None else _genome.fasta
@@ -83,23 +96,21 @@ class DataConfig:
         self.debug = debug
         self.fold = fold
 
+        if self.out_window is None:
+            if self.model_type == "chrombpnet":
+                self.out_window = 1000
+            elif is_histone(self.model_type):
+                self.out_window = 0
+
+        if self.ctrl_scaling_factor is None:
+            if is_histone(self.model_type):
+                self.ctrl_scaling_factor = 1.0
+
+        if self.outputlen_neg is None:
+            if is_histone(self.model_type):
+                self.outputlen_neg = 1000
+
         self.__post_init__()
-
-    # def set_additional_args(self, **kwargs):
-    #     for k, v in kwargs.items():
-    #         setattr(self, k, v)
-
-    # we cannot add these args in __init__ because it clashes with an arg of
-    # the same name in BPNetModelConfig
-    def set_additional_args(self, output_bins: str, model_type: str):
-        self.output_bins = output_bins
-        if self.output_bins is not None:
-            bins = [int(b.strip()) for b in self.output_bins.split(',')]
-            if any(b <= 0 for b in bins):
-                raise ValueError("All output bins must be positive integers")
-
-        self.model_type = model_type
-        self._validate_model_type()
 
     @classmethod
     def add_argparse_args(cls, parent_parser: ArgumentParser, **kwargs: Any):
@@ -116,6 +127,8 @@ class DataConfig:
         self._validate_paths()
         self._validate_windows()
         self._validate_chromosomes()
+        self._validate_model_type()
+        self._validate_output_bins()
 
     def _validate_paths(self):
         """Validate that all required files exist."""
@@ -159,3 +172,9 @@ class DataConfig:
     def _validate_model_type(self):
         if self.model_type not in ['chrombpnet'] and not is_histone(self.model_type):
             raise ValueError(f"Unrecognized model_type: {self.model_type}")
+
+    def _validate_output_bins(self):
+        if self.output_bins is not None:
+            bins = [int(b.strip()) for b in self.output_bins.split(',')]
+            if any(b <= 0 for b in bins):
+                raise ValueError("All output bins must be positive integers")

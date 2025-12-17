@@ -422,10 +422,6 @@ class ChromBPNetDataset(torch.utils.data.Dataset):
             rc_frac=self.rc_frac,
         )
 
-    def _get_adj(self):
-        """Get adjacency matrix for the data."""
-        pass
-
     def __getitem__(self, idx):
         """Get a sample from the dataset.
         

@@ -122,8 +122,10 @@ def setup(instance_id: str):
 def train(args, output_dir: str, logger):
     logger.add_to_log(f"Training with model type: {args.model_type}")
 
-    data_config = DataConfig.from_argparse_args(args)
-    data_config.set_additional_args(args.output_bins, args.model_type)
+    data_config = DataConfig.from_argparse_args(
+        args,
+        extra_kwargs={"output_bins": args.output_bins, "model_type": args.model_type}
+    )
 
     datamodule = DataModule(data_config, len(args.gpu))
     if is_histone(args.model_type):
@@ -157,7 +159,14 @@ def train(args, output_dir: str, logger):
         # last.ckpt will be the model as it was at epoch 17, the early-stopped point
         callbacks=[
             L.pytorch.callbacks.EarlyStopping(monitor='val_loss', patience=5),
-            L.pytorch.callbacks.ModelCheckpoint(monitor='val_loss', save_top_k=1, mode='min', filename='best_model', save_last=True),
+            L.pytorch.callbacks.ModelCheckpoint(
+                monitor='val_loss',
+                save_top_k=1,
+                mode='min',
+                filename='best_model',
+                save_last=True,
+                dirpath=pt_output_dir,
+            ),
         ],
         logger=[
             L.pytorch.loggers.WandbLogger(save_dir=pt_output_dir),
@@ -201,8 +210,10 @@ def predict(args, output_dir: str, model, logger, mode='predict', chrom: str=Non
     # print("fast_dev_run:", trainer.fast_dev_run)            # True / False / int
     # print("max_epochs:", trainer.max_epochs)
 
-    data_config = DataConfig.from_argparse_args(args)
-    data_config.set_additional_args(output_bins=args.output_bins, model_type=args.model_type)
+    data_config = DataConfig.from_argparse_args(
+        args,
+        extra_kwargs={"output_bins": args.output_bins, "model_type": args.model_type}
+    )
     dm = DataModule(data_config, len(args.gpu))
     model_config = model.get_model_config()
 
