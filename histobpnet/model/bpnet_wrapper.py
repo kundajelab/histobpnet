@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn.functional as F
 
@@ -125,7 +126,7 @@ class ChromBPNetWrapper(BaseBPNetWrapper):
         self.model = ChromBPNet(config)
         self.model_type = config.model_type
 
-    def load_pretrained_chrombpnet(self, bias_scaled_path: str = None, chrombpnet_wo_bias_path: str = None, instance=None, dataloader=None):
+    def load_pretrained_chrombpnet(self, bias_scaled_path: str = None, chrombpnet_wo_bias_path: str = None, instance=None, datamodule=None):
         """Load pretrained weights for bias and ChromBPNet without bias.
 
         Args:
@@ -133,6 +134,10 @@ class ChromBPNetWrapper(BaseBPNetWrapper):
             chrombpnet_wo_bias_path: Path to the pretrained ChromBPNet model without bias
         """
         if bias_scaled_path is not None:
-            self.model.bias = self.init_bias(bias_scaled_path, instance=self.model.bias, dataloader=dataloader)
+            self.model.bias = self.init_bias(bias_scaled_path, instance=self.model.bias, datamodule=datamodule)
         if chrombpnet_wo_bias_path is not None:
             self.model.model = self.init_chrombpnet_wo_bias(chrombpnet_wo_bias_path, freeze=False, instance=self.model.model)
+
+    def save_state_dict(self, save_dir: str):
+        print(f"Saving state_dict to {save_dir}...")
+        torch.save(self.model.model.state_dict(), os.path.join(save_dir, f'chrombpnet_wo_bias.pt'))

@@ -66,6 +66,7 @@ def get_parsers():
                         help='Training precision (16, 32, or 64)')
     parser.add_argument('--gradient_clip', type=float, default=None,
                         help='Gradient clipping value')
+    # TODO add a comment for this
     parser.add_argument('--adjust_bias', action='store_true',
                         help='Adjust bias model')
 
@@ -125,19 +126,15 @@ def train(args, output_dir: str, logger):
     data_config.set_additional_args(args.output_bins, args.model_type)
 
     datamodule = DataModule(data_config, len(args.gpu))
-    # negative_dl = None
     if is_histone(args.model_type):
         args.alpha = 1
+        dm = None
     elif args.model_type == 'chrombpnet':
         args.alpha = datamodule.median_count / 10
-        # negative_dl = datamodule.negative_dataloader() if args.adjust_bias else None
+        dm = datamodule
     else:
         raise ValueError(f"Unknown model type: {args.model_type}")
-    # model_wrapper = create_model_wrapper(args, dataloader=negative_dl)
-    model_wrapper = create_model_wrapper(args, dataloader=None)
-
-    if args.adjust_bias:
-        adjust_bias_model_logcounts(model_wrapper.model.bias, datamodule.negative_dataloader())
+    model_wrapper = create_model_wrapper(args, datamodule=dm)
 
     pt_output_dir = os.path.join(output_dir, "pt_artifacts")
     os.makedirs(pt_output_dir, exist_ok=False)
@@ -179,15 +176,10 @@ def train(args, output_dir: str, logger):
         # into a plain nn.Module
         ckpt_dir = os.path.join(output_dir, "checkpoints")
         os.makedirs(ckpt_dir, exist_ok=False)
-        # TODO_later this currently only works for the histobpnet model where I've called the BPNet model bpnet
-        # for other models I guess it might make sense to store a list or dict of sub-Modules and then save all
-        # those here?
-        torch.save(model_wrapper.model.bpnet.state_dict(), os.path.join(ckpt_dir, f'{args.model_type}.pt'))
-        # TODO fix
-        # torch.save(model.model.model.state_dict(), os.path.join(out_dir, 'checkpoints/chrombpnet_wo_bias.pt'))
+        model_wrapper.save_state_dict(ckpt_dir)
 
-    # return the model_wrapper and the path to the best_model.ckpt
-    return model_wrapper, os.path.join(trainer.checkpoint_callback.dirpath, 'best_model.ckpt')
+    # return the path to the best_model.ckpt
+    return os.path.join(trainer.checkpoint_callback.dirpath, 'best_model.ckpt')
 
 def predict(args, output_dir: str, model, logger, mode='predict', chrom: str=None):
     trainer = L.Trainer(logger=False, accelerator='gpu', fast_dev_run=args.fast_dev_run, devices=args.gpu, val_check_interval=None)
@@ -255,7 +247,7 @@ def interpret(args, args_d, model, datamodule=None):
     # os.makedirs(os.path.join(out_dir, 'interpret'), exist_ok=True)
     # np.save(os.path.join(out_dir, 'interpret', 'mutagenesis.npy'), out)
 
-def create_model_wrapper(args, checkpoint: str = None, dataloader = None):
+def create_model_wrapper(args, checkpoint: str = None, datamodule = None):
     """Factory function to create appropriate model wrapper.
     """
     model_type = args.model_type.lower()
@@ -265,11 +257,9 @@ def create_model_wrapper(args, checkpoint: str = None, dataloader = None):
     elif model_type == 'chrombpnet':
         if checkpoint is not None:
             assert checkpoint.endswith('.ckpt')
-            # TODO do we need to call adjust_bias_model_log_counts here, or can it be already included in the checkpoint?
             return ChromBPNetWrapper.load_from_checkpoint(checkpoint, map_location='cpu')
         model_wrapper = ChromBPNetWrapper(args)
-        # TODO do we need to call adjust_bias_model_log_counts here, or can it be already included in the checkpoint?
-        model_wrapper.load_pretrained_chrombpnet(args.bias_scaled, args.chrombpnet_wo_bias, dataloader = dataloader)
+        model_wrapper.load_pretrained_chrombpnet(args.bias_scaled, args.chrombpnet_wo_bias, datamodule = datamodule)
     elif model_type == 'histobpnet_v1':
         if checkpoint is not None:
             assert checkpoint.endswith('.ckpt')
@@ -297,7 +287,8 @@ def main(instance_id: str):
     args, output_dir, logger = setup(instance_id)
 
     if args.command == 'train':
-        model, _ = train(args, output_dir, logger)
+        best_model_ckpt = train(args, output_dir, logger)
+        model = create_model_wrapper(args, checkpoint=best_model_ckpt)
         predict(args, output_dir, model, logger, chrom="test")
     elif args.command == 'predict':
         model = create_model_wrapper(args, checkpoint=args.checkpoint)
@@ -315,7 +306,6 @@ if __name__ == '__main__':
     instance_id = get_instance_id()
     print(f"*** Using instance_id: {instance_id}")
 
-    # set_random_seed(seed=42, skip_tf=True)
     # set_random_seed(seed=1234, skip_tf=True)
     L.seed_everything(1234)
     t0 = time.time()

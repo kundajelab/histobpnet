@@ -85,7 +85,7 @@ class ModelWrapper(LightningModule):
     def _step(self, batch, batch_idx, mode='train'):
         raise NotImplementedError("Subclasses must implement this method")
 
-    def init_bias(self, bias: str, dataloader=None, verbose=True, device=1, instance=None):
+    def init_bias(self, bias: str, datamodule=None, verbose=True, instance=None):
         print(f"Loading bias model from {bias}")
         bias_model = BPNet.from_keras(bias, name='bias', instance=instance)
 
@@ -94,8 +94,8 @@ class ModelWrapper(LightningModule):
         for param in bias_model.parameters():
             param.requires_grad = False
 
-        if dataloader is not None:
-            bias_model = adjust_bias_model_logcounts(bias_model, dataloader, verbose=verbose, device=device)
+        if datamodule is not None:
+            bias_model = adjust_bias_model_logcounts(bias_model, datamodule.negative_dataloader(), verbose=verbose)
 
         return bias_model
 
@@ -113,6 +113,9 @@ class ModelWrapper(LightningModule):
                 param.requires_grad = False
 
         return model
+
+    def save_state_dict():
+        raise NotImplementedError("Subclasses must implement this method")
 
     def _predict_on_dataloader(self, dataloader, func, **kwargs):
         raise ValueError("Putting this here for now so I know when it's called!")
@@ -259,7 +262,7 @@ class ModelWrapper(LightningModule):
                 plt.close(fig)
 
 # valeh: ?? TODO
-def adjust_bias_model_logcounts(bias_model, dataloader, verbose=True, device=1):
+def adjust_bias_model_logcounts(bias_model, dataloader, verbose=True):
     """
     Given a bias model, sequences and associated counts, the function adds a 
     constant to the output of the bias_model's logcounts that minimizes squared

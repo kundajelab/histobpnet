@@ -1,3 +1,6 @@
+import os
+import torch
+
 from histobpnet.model.model_wrappers import ModelWrapper
 from histobpnet.model.histobpnet_v2 import HistoBPNetV2
 from histobpnet.model.model_config import BPNetModelConfig
@@ -65,3 +68,7 @@ class HistoBPNetWrapperV2(ModelWrapper):
                 freeze=False, 
                 instance=self.model.bpnet,
             )
+    
+    def save_state_dict(self, save_dir: str):
+        print(f"Saving state_dict to {save_dir}...")
+        torch.save(self.model.bpnet.state_dict(), os.path.join(save_dir, f'{self.model_type}.pt'))
