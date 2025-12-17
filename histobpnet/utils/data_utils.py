@@ -108,8 +108,8 @@ def load_region_df(
 
     add_peak_id(filtered_df)
 
-    # filter out any regions that dont have a matching histone peak
     if skip_missing_hist:
+        # filter out any regions that dont have a matching histone peak
         assert atac_hgp_map != ""
         atac_hgp_df = pd.read_csv(atac_hgp_map, sep="\t", header=0)
         add_peak_id(atac_hgp_df, chr_key="chrom")

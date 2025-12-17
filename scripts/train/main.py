@@ -12,7 +12,7 @@ from toolbox.logger import SimpleLogger
 
 from histobpnet.data_loader.data_config import DataConfig
 from histobpnet.model.model_config import BPNetModelConfig
-from histobpnet.data_loader.dataset import DataModule
+from histobpnet.data_loader.datamodule import DataModule
 from histobpnet.eval.metrics import compare_with_observed, save_predictions, load_output_to_regions
 from histobpnet.utils.general_utils import is_histone
 from histobpnet.model.bpnet_wrapper import BPNetWrapper, ChromBPNetWrapper

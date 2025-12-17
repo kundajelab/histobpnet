@@ -25,16 +25,14 @@ class DataConfig:
         negatives: str = None,
         bigwig: str = None,
         bigwig_ctrl: str = None,
-        fasta: str = None,
-        chrom_sizes: str = None,
+        fasta: str = "/large_storage/goodarzilab/valehvpa/refs/hg38/GRCh38_no_alt_analysis_set_GCA_000001405.15.fasta",
+        chrom_sizes: str = "/large_storage/goodarzilab/valehvpa/refs/hg38/hg38.chrom.sizes",
         saved_data: str = None,
         negative_sampling_ratio: float = 0.1,
         fold: int = 0,
         genome: str = 'hg38',
         in_window: int = 2114,
         atac_hgp_map: str = None,
-        shift: int = 500,
-        rc_frac: float = 0.5,
         outlier_threshold: float = 0.999,
         skip_missing_hist: bool = False,
         exclude_chroms: List = None,
@@ -42,6 +40,8 @@ class DataConfig:
         num_workers: int = 16,
         debug: bool = False,
         # these are parameters whose default values can vary based on model_type
+        shift: int = None,
+        rc_frac: float = None,
         out_window: int = None,
         ctrl_scaling_factor: float = None,
         outputlen_neg: int = None,
@@ -57,21 +57,18 @@ class DataConfig:
                 raise ValueError("All output bins must be positive integers")
 
         if genome == 'hg38':
-            _genome = hg38
             _datasets = hg38_datasets()
         elif genome == 'mm10':
-            _genome = mm10
             _datasets = mm10_datasets()
         else:
             raise ValueError(f"Unsupported genome: {genome}")
         
+        self.fasta = fasta
+        self.chrom_sizes = chrom_sizes
         self.peaks = peaks
         self.negatives = negatives
         self.bigwig = bigwig
         self.bigwig_ctrl = bigwig_ctrl
-        
-        self.fasta = fasta if fasta is not None else _genome.fasta
-        self.chrom_sizes = chrom_sizes if chrom_sizes is not None else _genome.chrom_sizes
 
         fold_file_path = _datasets.fetch(f'fold_{fold}.json', progressbar=False)
         splits_dict = json.load(open(fold_file_path))
@@ -95,6 +92,18 @@ class DataConfig:
         self.num_workers = num_workers
         self.debug = debug
         self.fold = fold
+
+        if self.shift is None:
+            if self.model_type == "chrombpnet":
+                self.shift = 500
+            elif is_histone(self.model_type):
+                self.shift = 0
+
+        if self.rc_frac is None:
+            if self.model_type == "chrombpnet":
+                self.rc_frac = 0.5
+            elif is_histone(self.model_type):
+                self.rc_frac = 0
 
         if self.out_window is None:
             if self.model_type == "chrombpnet":
