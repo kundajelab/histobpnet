@@ -16,6 +16,9 @@ class ChromBPNet(nn.Module):
     ):
         super().__init__()
 
+        import lightning as L
+        L.seed_everything(1234)
+
         # TODO_later call this acc instead of model
         self.model = BPNet(
             n_filters = config.n_filters, 
