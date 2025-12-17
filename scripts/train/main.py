@@ -136,21 +136,8 @@ def train(args, output_dir: str, logger):
     # model_wrapper = create_model_wrapper(args, dataloader=negative_dl)
     model_wrapper = create_model_wrapper(args, dataloader=None)
 
-    # if args.model_type == 'chrombpnet':
-    #     logger.add_to_log("---- bias model parameters pre adj ----")
-    #     for name, param in model_wrapper.model.bias.named_parameters():
-    #         logger.add_to_log(f"{name}: {param.data}")
-
     if args.adjust_bias:
         adjust_bias_model_logcounts(model_wrapper.model.bias, datamodule.negative_dataloader())
-
-    # logger.add_to_log("---- acc model parameters ----")
-    # for name, param in model_wrapper.model.model.named_parameters():
-    #     logger.add_to_log(f"{name}: {param.data}")
-
-    # logger.add_to_log("---- bias model parameters ----")
-    # for name, param in model_wrapper.model.bias.named_parameters():
-    #     logger.add_to_log(f"{name}: {param.data}")
 
     pt_output_dir = os.path.join(output_dir, "pt_artifacts")
     os.makedirs(pt_output_dir, exist_ok=False)
@@ -199,8 +186,8 @@ def train(args, output_dir: str, logger):
         # TODO fix
         # torch.save(model.model.model.state_dict(), os.path.join(out_dir, 'checkpoints/chrombpnet_wo_bias.pt'))
 
-    # return the path to the best_model.ckpt
-    return os.path.join(trainer.checkpoint_callback.dirpath, 'best_model.ckpt')
+    # return the model_wrapper and the path to the best_model.ckpt
+    return model_wrapper, os.path.join(trainer.checkpoint_callback.dirpath, 'best_model.ckpt')
 
 def predict(args, output_dir: str, model, logger, mode='predict', chrom: str=None):
     trainer = L.Trainer(logger=False, accelerator='gpu', fast_dev_run=args.fast_dev_run, devices=args.gpu, val_check_interval=None)
@@ -310,8 +297,7 @@ def main(instance_id: str):
     args, output_dir, logger = setup(instance_id)
 
     if args.command == 'train':
-        best_model_ckpt = train(args, output_dir, logger)
-        # model = create_model_wrapper(args, checkpoint=best_model_ckpt)
+        model, _ = train(args, output_dir, logger)
         predict(args, output_dir, model, logger, chrom="test")
     elif args.command == 'predict':
         model = create_model_wrapper(args, checkpoint=args.checkpoint)

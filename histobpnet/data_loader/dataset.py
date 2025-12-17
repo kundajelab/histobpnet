@@ -139,9 +139,6 @@ class DataModule(L.LightningDataModule):
         config = self.config
 
         if stage == 'fit':
-            # import lightning as L
-            # L.seed_everything(1234)
-
             train_peaks, train_nonpeaks = split_peak_and_nonpeak(self.train_data)
             val_peaks, val_nonpeaks = split_peak_and_nonpeak(self.val_data)
 

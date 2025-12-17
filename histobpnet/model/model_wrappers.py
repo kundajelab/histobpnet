@@ -85,7 +85,6 @@ class ModelWrapper(LightningModule):
     def _step(self, batch, batch_idx, mode='train'):
         raise NotImplementedError("Subclasses must implement this method")
 
-    # TODO reser verbose to false
     def init_bias(self, bias: str, dataloader=None, verbose=True, device=1, instance=None):
         print(f"Loading bias model from {bias}")
         bias_model = BPNet.from_keras(bias, name='bias', instance=instance)
@@ -260,7 +259,6 @@ class ModelWrapper(LightningModule):
                 plt.close(fig)
 
 # valeh: ?? TODO
-# TODO reset verbose to False
 def adjust_bias_model_logcounts(bias_model, dataloader, verbose=True, device=1):
     """
     Given a bias model, sequences and associated counts, the function adds a 
@@ -285,12 +283,7 @@ def adjust_bias_model_logcounts(bias_model, dataloader, verbose=True, device=1):
             _delta = true_counts.mean(-1) - pred_counts.mean(-1)
             delta.append(_delta)
         delta = torch.cat(delta, dim=0).mean()
-        
-        print(f"### mean delta to add to bias model logcounts: {delta.item()}", flush=True)
-        # before and after
-        print("### before adjustment bias_model.linear.bias:", bias_model.linear.bias, flush=True)
         bias_model.linear.bias += torch.Tensor(delta).to(bias_model.linear.bias.device)
-        print("### after adjustment bias_model.linear.bias:", bias_model.linear.bias, flush=True)
 
     if verbose:
         print('### delta', delta, flush=True)

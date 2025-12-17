@@ -367,6 +367,7 @@ python /home/valehvpa/projects/scCisTrans/histobpnet/scripts/train/main.py \
 
 ########################################
 
+# COMAPRE LEI S TO MINE
 python /home/valehvpa/projects/scCisTrans/histobpnet/scripts/train/main.py \
     --command train \
     --name chrombpnet_train_k562_lei_compare_seed_ev \
@@ -386,3 +387,4 @@ python /home/valehvpa/projects/scCisTrans/histobpnet/scripts/train/main.py \
 
 # chrombpnet train --peaks /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/lei_peaks_ss_40000.bed --negatives /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/negatives/lei_negatives_ss_40000.bed --bigwig /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/lei_unstranded.bw --bias /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/pretrained/ENCSR467RSV/fold_0/model.bias_scaled.fold_0.ENCSR868FGK.h5 --fasta /large_storage/goodarzilab/valehvpa/refs/hg38/GRCh38_no_alt_analysis_set_GCA_000001405.15.fasta --adjust_bias
 
+########################################
