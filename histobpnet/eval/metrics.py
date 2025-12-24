@@ -70,7 +70,8 @@ def load_output_to_regions(output, regions, out_dir: str):
     regions.to_csv(os.path.join(out_dir, 'regions.csv'), sep='\t', index=False)
     return regions, parsed_output
 
-def compare_with_observed(regions, parsed_output, out_dir: str, tag='all_regions', skip_profile: bool = False):
+def compare_with_observed(regions, parsed_output, out_dir: str, tag='all_regions', skip_profile: bool = False,
+                          model_wrapper=None, wandb_log_name: str = None):
     metrics_dictionary = {}
 
     # save count metrics (peaks and nonpeaks)
@@ -78,7 +79,9 @@ def compare_with_observed(regions, parsed_output, out_dir: str, tag='all_regions
     spearman_cor, pearson_cor, mse = counts_metrics(
         regions['true_count'],
         regions['pred_count'],
-        os.path.join(out_dir, 'all_regions')
+        os.path.join(out_dir, 'all_regions'),
+        model_wrapper=model_wrapper,
+        wandb_log_name=wandb_log_name,
     )
     metrics_dictionary["counts_metrics"]["peaks_and_nonpeaks"] = {}
     metrics_dictionary["counts_metrics"]["peaks_and_nonpeaks"]["spearmanr"] = spearman_cor
@@ -107,7 +110,9 @@ def compare_with_observed(regions, parsed_output, out_dir: str, tag='all_regions
         spearman_cor, pearson_cor, mse = counts_metrics(
             peak_regions['true_count'],
             peak_regions['pred_count'],
-            os.path.join(out_dir, 'peaks')
+            os.path.join(out_dir, 'peaks'),
+            model_wrapper=model_wrapper,
+            wandb_log_name=wandb_log_name,
         )
         metrics_dictionary["counts_metrics"]["peaks"] = {}
         metrics_dictionary["counts_metrics"]["peaks"]["spearmanr"] = spearman_cor
@@ -133,7 +138,9 @@ def compare_with_observed(regions, parsed_output, out_dir: str, tag='all_regions
         spearman_cor, pearson_cor, mse = counts_metrics(
             nonpeak_regions['true_count'],
             nonpeak_regions['pred_count'],
-            os.path.join(out_dir, 'nonpeaks')
+            os.path.join(out_dir, 'nonpeaks'),
+            model_wrapper=model_wrapper,
+            wandb_log_name=wandb_log_name,
         )
         metrics_dictionary["counts_metrics"]["nonpeaks"] = {}
         metrics_dictionary["counts_metrics"]["nonpeaks"]["spearmanr"] = spearman_cor
@@ -162,7 +169,9 @@ def counts_metrics(
     outf: str = None,
     fontsize = 20,
     xlab = 'Log Count Labels',
-    ylab = 'Log Count Predictions'
+    ylab = 'Log Count Predictions',
+    model_wrapper=None,
+    wandb_log_name: str = None,
 ):
     spearman_cor = spearmanr(labels, preds)[0]
     pearson_cor = pearsonr(labels, preds)[0]  
@@ -170,25 +179,34 @@ def counts_metrics(
 
     set_plotting_params((8, 8))
     # fig=plt.figure()
-    ax = density_scatter(
+    fig, _, _, _, _ = density_scatter(
         labels,
         preds,
         xlab=xlab,
         ylab=ylab,
         fontsize=fontsize,
     )
-    plt.suptitle(
+    fig.suptitle(
         "count: spearman R="+str(round(spearman_cor,3))+"\nPearson R="+str(round(pearson_cor,3))+"\nmse="+str(round(mse,3)),
         y=0.9,
         fontsize=20
     )
     # plt.legend(loc='best')
 
+    filepath = outf+'.counts_pearsonr.png' if outf is not None else None
     if outf is not None:
         plt.savefig(outf+'.counts_pearsonr.png',format='png',dpi=300)
+    
+        if wandb_log_name is not None:
+            assert model_wrapper is not None, "model_wrapper must be provided when wandb_log_name is not None"
+            # if the name is /xxx/yyy/zzz.counts_pearsonr.png, get the zzz part
+            region_type = os.path.basename(filepath).split(".", 1)[0]
+            filename = f"{wandb_log_name}_scatter_{region_type}"
+            model_wrapper._log_plot(fig, name=filename, close_fig = False)
+    
     plt.show()
     plt.close()
-    
+
     return spearman_cor, pearson_cor, mse
 
 def profile_metrics(true_counts, pred_probs, pseudocount = 0.001):

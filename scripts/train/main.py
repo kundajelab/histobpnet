@@ -141,6 +141,10 @@ def train(args, output_dir: str, logger):
     pt_output_dir = os.path.join(output_dir, "pt_artifacts")
     os.makedirs(pt_output_dir, exist_ok=False)
 
+    loggers = [
+        L.pytorch.loggers.WandbLogger(save_dir=pt_output_dir),
+        L.pytorch.loggers.CSVLogger(pt_output_dir)
+    ]
     trainer = L.Trainer(
         max_epochs=args.max_epochs,
         # valeh: why not 0? TODO_later ask Lei
@@ -168,10 +172,7 @@ def train(args, output_dir: str, logger):
                 dirpath=pt_output_dir,
             ),
         ],
-        logger=[
-            L.pytorch.loggers.WandbLogger(save_dir=pt_output_dir),
-            L.pytorch.loggers.CSVLogger(pt_output_dir)
-        ],
+        logger=loggers,
         fast_dev_run=args.fast_dev_run,
         precision=args.precision,
         gradient_clip_val=args.gradient_clip,
@@ -190,8 +191,15 @@ def train(args, output_dir: str, logger):
     # return the path to the best_model.ckpt
     return os.path.join(trainer.checkpoint_callback.dirpath, 'best_model.ckpt')
 
-def predict(args, output_dir: str, model, logger, mode='predict', chrom: str=None):
-    trainer = L.Trainer(logger=False, accelerator='gpu', fast_dev_run=args.fast_dev_run, devices=args.gpu, val_check_interval=None)
+def predict(args, output_dir: str, checkpoint: str, logger, mode: str='predict', chrom: str=None):
+    logger.add_to_log(f"Predicting with model type: {args.model_type}")
+
+    model = create_model_wrapper(args, checkpoint=checkpoint)
+
+    pt_output_dir = os.path.join(output_dir, "pt_artifacts_pred")
+    os.makedirs(pt_output_dir, exist_ok=False)
+    trainer = L.Trainer(logger=L.pytorch.loggers.WandbLogger(save_dir=pt_output_dir),
+                        accelerator='gpu', fast_dev_run=args.fast_dev_run, devices=args.gpu, val_check_interval=None)
 
     # TODO_later log these
     # print("accelerator:", trainer.accelerator)              # object, e.g. GPUAccelerator(...)
@@ -226,8 +234,8 @@ def predict(args, output_dir: str, model, logger, mode='predict', chrom: str=Non
     os.makedirs(od, exist_ok=False)
     regions, parsed_output = load_output_to_regions(output, dataset.regions, od)
     skip_profile = is_histone(data_config.model_type)
-    compare_with_observed(regions, parsed_output, od, skip_profile=skip_profile)
-    # currently only predict counts for histobpnet
+    compare_with_observed(regions, parsed_output, od, skip_profile=skip_profile, model_wrapper=model, wandb_log_name=chr)
+    # currently we only predict counts for histobpnet
     if not skip_profile:
         save_predictions(output, regions, data_config.chrom_sizes, od, seqlen=model_config.out_dim)
 
@@ -299,11 +307,9 @@ def main(instance_id: str):
 
     if args.command == 'train':
         best_model_ckpt = train(args, output_dir, logger)
-        model = create_model_wrapper(args, checkpoint=best_model_ckpt)
-        predict(args, output_dir, model, logger, chrom="test")
+        predict(args, output_dir, best_model_ckpt, logger, chrom="test")
     elif args.command == 'predict':
-        model = create_model_wrapper(args, checkpoint=args.checkpoint)
-        predict(args, output_dir, model, logger)
+        predict(args, output_dir, args.checkpoint, logger)
     elif args.command == 'interpret':
         model = create_model_wrapper(args, checkpoint=args.checkpoint)
         interpret(args, model)
@@ -317,8 +323,8 @@ if __name__ == '__main__':
     instance_id = get_instance_id()
     print(f"*** Using instance_id: {instance_id}")
 
-    # set_random_seed(seed=1234, skip_tf=True)
-    L.seed_everything(1234)
+    set_random_seed(seed=42, skip_tf=True)
+    # L.seed_everything(1234)
     t0 = time.time()
     logger = main(instance_id)
     tt = time.time() - t0

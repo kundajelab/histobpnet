@@ -34,7 +34,7 @@ class DataConfig:
         in_window: int = 2114,
         atac_hgp_map: str = None,
         outlier_threshold: float = 0.999,
-        skip_missing_hist: bool = False,
+        skip_missing_hist: str = "N/A",
         exclude_chroms: List = None,
         batch_size: int = 64,
         num_workers: int = 16,
@@ -138,6 +138,7 @@ class DataConfig:
         self._validate_chromosomes()
         self._validate_model_type()
         self._validate_output_bins()
+        self._validate_skip_missing_hist()
 
     def _validate_paths(self):
         """Validate that all required files exist."""
@@ -187,3 +188,7 @@ class DataConfig:
             bins = [int(b.strip()) for b in self.output_bins.split(',')]
             if any(b <= 0 for b in bins):
                 raise ValueError("All output bins must be positive integers")
+
+    def _validate_skip_missing_hist(self):
+        valids = ["Yes", "No", "N/A"]
+        assert self.skip_missing_hist in valids

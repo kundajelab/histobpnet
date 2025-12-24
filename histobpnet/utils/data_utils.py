@@ -64,7 +64,7 @@ def load_region_df(
     is_peak: bool=True,
     logger=None,
     width=None,
-    skip_missing_hist=False,
+    skip_missing_hist="N/A",
     atac_hgp_map="",
 ):
     """
@@ -108,10 +108,12 @@ def load_region_df(
 
     add_peak_id(filtered_df)
 
-    if skip_missing_hist:
+    if skip_missing_hist == "Yes":
         # filter out any regions that dont have a matching histone peak
         assert atac_hgp_map != ""
-        atac_hgp_df = pd.read_csv(atac_hgp_map, sep="\t", header=0)
+        atac_hgp_df = pd.read_csv(atac_hgp_map, sep="\t", header=None, names=[
+            "chrom", "start", "end", "hist_chrom", "hist_start", "hist_end"
+        ])
         add_peak_id(atac_hgp_df, chr_key="chrom")
         merged = filtered_df.merge(
             atac_hgp_df[["peak_id", "hist_chrom", "hist_start", "hist_end"]],
@@ -166,7 +168,7 @@ def get_cts(
     width,
     atac_hgp_df=None,
     get_total_cts: bool = False,
-    skip_missing_hist: bool = False,
+    skip_missing_hist: str = "N/A",
     ctrl_scaling_factor: float = 1.0,
 ):
     """
@@ -200,7 +202,13 @@ def get_cts(
             if pd.isna(r['hist_chrom']):
                 raise ValueError(f"No matching ATAC-Histone mapping found for region: {r['chr']}:{r['start']}-{r['end']}")
             elif r.hist_chrom == '.':
-                assert not skip_missing_hist, "skip_missing_hist is True but found missing histone peak."
+                # skip_missing_hist could be Yes, which is not expected here
+                # or No, in which case we use 0
+                # or N/A in which case we also use 0. This is the case for example when we use closest hgp's
+                # in which case there is almost always one such hgp (so we pass N/A for skip_missing_hist) but
+                # for very rare cases there can still be a missing hgp if there is no closest hgp on the same chr 
+                # for example (in gm12878 I saw two such atac peaks) and in those cases it's ok to just pass 0
+                assert skip_missing_hist != "Yes", "skip_missing_hist is Yes but found missing histone peak."
                 if get_total_cts:
                     vals.append(np.array([0]))
                 else:
@@ -208,16 +216,21 @@ def get_cts(
             else:
                 if not get_total_cts:
                     assert ctrl_scaling_factor == 1.0, "Not yet implemented...."
-                    raw = bw.values(r.hist_chrom, r.hist_start, r.hist_end)
+                    # not sure why but sometimes it sees hist_start/end as floats ¯\_(ツ)_/¯
+                    raw = bw.values(r.hist_chrom, int(r.hist_start), int(r.hist_end))
                     # pad to width w/ 0
                     padded = np.zeros(width, dtype=float)
                     padded[:len(raw)] = raw
                     # TODO_later should prob make this a sparse matrix. also validate 
                     vals.append(np.nan_to_num(padded))
                 else:
-                    vals.append(np.array([
-                        ctrl_scaling_factor * np.nansum(bw.values(r.hist_chrom, r.hist_start, r.hist_end))
-                    ]))
+                    try:
+                        vals.append(np.array([
+                            ctrl_scaling_factor * np.nansum(bw.values(r.hist_chrom, int(r.hist_start), int(r.hist_end)))
+                        ]))
+                    except:
+                        print("Error fetching values for region:", r)
+                        raise
     else:
         for _, r in peaks_df.iterrows():
             if not get_total_cts:
@@ -268,7 +281,7 @@ def get_seq_cts_coords(
     peaks_bool,
     atac_hgp_df=None,
     get_total_cts: bool = False,
-    skip_missing_hist: bool = False,
+    skip_missing_hist: str = "N/A",
     mode: str = "",
     ctrl_scaling_factor: float = 1.0,
 ):
@@ -309,7 +322,7 @@ def load_data(
     output_bins = None,
     atac_hgp_df = None,
     get_total_cts = False,
-    skip_missing_hist = False,
+    skip_missing_hist = "N/A",
     mode: str = "",
     ctrl_scaling_factor: float = 1.0,
     outputlen_neg: int = None,

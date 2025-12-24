@@ -27,8 +27,10 @@ class HistoBPNetDatasetV2(ChromBPNetDataset):
         assert rc_frac == 0
         assert config.bigwig_ctrl is not None, "bigwig_ctrl must be provided"
 
-        assert self.config.atac_hgp_map is not None
-        atac_hgp_df = pd.read_csv(self.config.atac_hgp_map, sep="\t", header=0)
+        assert config.atac_hgp_map is not None
+        atac_hgp_df = pd.read_csv(config.atac_hgp_map, sep="\t", header=None, names=[
+            "chrom", "start", "end", "hist_chrom", "hist_start", "hist_end"
+        ])
         add_peak_id(atac_hgp_df, chr_key="chrom")
 
         validate_mode(mode)
