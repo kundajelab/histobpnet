@@ -233,9 +233,9 @@ def predict(args, output_dir: str, checkpoint: str, logger, mode: str='predict',
     od = os.path.join(output_dir, mode, chr)
     os.makedirs(od, exist_ok=False)
     regions, parsed_output = load_output_to_regions(output, dataset.regions, od)
+    # currently we only predict counts for histobpnet
     skip_profile = is_histone(data_config.model_type)
     compare_with_observed(regions, parsed_output, od, skip_profile=skip_profile, model_wrapper=model, wandb_log_name=chr)
-    # currently we only predict counts for histobpnet
     if not skip_profile:
         save_predictions(output, regions, data_config.chrom_sizes, od, seqlen=model_config.out_dim)
 

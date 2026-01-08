@@ -40,6 +40,7 @@ class HistoBPNetDatasetV3(ChromBPNetDataset):
             mode=mode,
             ctrl_scaling_factor=config.ctrl_scaling_factor,
             outputlen_neg = config.outputlen_neg,
+            pass_zero_mode = config.pass_zero_mode,
         )
 
         # Store parameters

@@ -24,6 +24,7 @@ class HistoBPNetV1(nn.Module):
             count_output_bias = config.count_output_bias, 
             n_count_outputs=config.n_count_outputs,
             for_histone='histobpnet_v1',
+            use_linear_w_ctrl=config.use_linear_w_ctrl,
         )
 
         self.n_control_tracks = config.n_control_tracks

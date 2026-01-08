@@ -170,6 +170,7 @@ def get_cts(
     get_total_cts: bool = False,
     skip_missing_hist: str = "N/A",
     ctrl_scaling_factor: float = 1.0,
+    pass_zero: bool = False,
 ):
     """
     Fetches values from a bigwig bw, given a df with minimally
@@ -216,6 +217,7 @@ def get_cts(
             else:
                 if not get_total_cts:
                     assert ctrl_scaling_factor == 1.0, "Not yet implemented...."
+                    assert pass_zero is False, "Not yet implemented...."
                     # not sure why but sometimes it sees hist_start/end as floats ¯\_(ツ)_/¯
                     raw = bw.values(r.hist_chrom, int(r.hist_start), int(r.hist_end))
                     # pad to width w/ 0
@@ -225,9 +227,12 @@ def get_cts(
                     vals.append(np.nan_to_num(padded))
                 else:
                     try:
-                        vals.append(np.array([
-                            ctrl_scaling_factor * np.nansum(bw.values(r.hist_chrom, int(r.hist_start), int(r.hist_end)))
-                        ]))
+                        if pass_zero:
+                            vals.append(np.array([0]))
+                        else:
+                            vals.append(np.array([
+                                ctrl_scaling_factor * np.nansum(bw.values(r.hist_chrom, int(r.hist_start), int(r.hist_end)))
+                            ]))
                     except:
                         print("Error fetching values for region:", r)
                         raise
@@ -235,21 +240,25 @@ def get_cts(
         for _, r in peaks_df.iterrows():
             if not get_total_cts:
                 assert ctrl_scaling_factor == 1.0, "Not yet implemented...."
+                assert pass_zero is False, "Not yet implemented...."
                 vals.append(
                     np.nan_to_num(bw.values(r['chr'],
                                             r['start'] + r['summit'] - width//2,
                                             r['start'] + r['summit'] + width//2))
                 )
             else:
-                vals.append(np.array([
-                    ctrl_scaling_factor * np.nansum(bw.values(r['chr'],
-                                                            r['start'] + r['summit'] - width//2,
-                                                            r['start'] + r['summit'] + width//2))
-                ]))
+                if pass_zero:
+                    vals.append(np.array([0]))
+                else:
+                    vals.append(np.array([
+                        ctrl_scaling_factor * np.nansum(bw.values(r['chr'],
+                                                                r['start'] + r['summit'] - width//2,
+                                                                r['start'] + r['summit'] + width//2))
+                    ]))
 
     return np.array(vals)
 
-def get_seq(peaks_df, genome, width):
+def get_seq(peaks_df, genome, width, pass_zero: bool = False,):
     """
     Same as get_cts, but fetches sequence from a given genome.
     """
@@ -258,6 +267,9 @@ def get_seq(peaks_df, genome, width):
         sequence = str(genome[r['chr']][(r['start']+r['summit'] - width//2):(r['start'] + r['summit'] + width//2)])
         vals.append(sequence)
 
+    if pass_zero:
+        return np.zeros((len(vals), width, 4), dtype=np.int8)
+    
     return dna_to_one_hot(vals)
 
 def get_coords(peaks_df, peaks_bool):
@@ -284,8 +296,9 @@ def get_seq_cts_coords(
     skip_missing_hist: str = "N/A",
     mode: str = "",
     ctrl_scaling_factor: float = 1.0,
+    pass_zero_mode: str = "N/A",
 ):
-    seq = get_seq(peaks_df, genome, input_width)
+    seq = get_seq(peaks_df, genome, input_width, pass_zero=(pass_zero_mode=="zero_seq"))
 
     cts = get_cts(
         peaks_df,
@@ -295,6 +308,7 @@ def get_seq_cts_coords(
         get_total_cts=get_total_cts,
         skip_missing_hist=skip_missing_hist,
         ctrl_scaling_factor=ctrl_scaling_factor,
+        pass_zero=(pass_zero_mode=="zero_cts"),
     )
 
     cts_ctrl = get_cts(
@@ -305,7 +319,13 @@ def get_seq_cts_coords(
         get_total_cts=get_total_cts,
         skip_missing_hist=skip_missing_hist,
         ctrl_scaling_factor=ctrl_scaling_factor,
+        pass_zero=(pass_zero_mode=="zero_ctl"),
     ) if bw_ctrl is not None else None
+
+    if pass_zero_mode != "N/A":
+        # sanity check
+        print("sums w/ pass_zero_mode {}: ".format(pass_zero_mode),
+              np.sum(seq), np.sum(cts), np.sum(cts_ctrl) if cts_ctrl is not None else "no ctl")
 
     coords = get_coords(peaks_df, peaks_bool)
     return seq, cts, cts_ctrl, coords
@@ -326,6 +346,7 @@ def load_data(
     mode: str = "",
     ctrl_scaling_factor: float = 1.0,
     outputlen_neg: int = None,
+    pass_zero_mode: str = "N/A",
 ):
     """
     Load sequences and corresponding base resolution counts for training, 
@@ -379,6 +400,7 @@ def load_data(
             skip_missing_hist=skip_missing_hist,
             mode=mode,
             ctrl_scaling_factor=ctrl_scaling_factor,
+            pass_zero_mode=pass_zero_mode,
         )
     
     if nonpeak_regions is not None:
@@ -397,6 +419,7 @@ def load_data(
             skip_missing_hist=skip_missing_hist,
             mode=mode,
             ctrl_scaling_factor=ctrl_scaling_factor,
+            pass_zero_mode=pass_zero_mode,
         )
 
     cts_bw.close()

@@ -192,7 +192,7 @@ class ModelWrapper(LightningModule):
 
             print(f"{mode} epoch end: sanity_checking={self.trainer.sanity_checking}", flush=True)
             if (self.trainer.sanity_checking is not None) and (not self.trainer.sanity_checking):
-                print(f"{mode} epoch end: here", flush=True)
+                # print(f"{mode} epoch end: here", flush=True)
                 at, ap, aps = all_targets.detach().cpu().numpy(), all_preds.detach().cpu().numpy(), all_peak_status.detach().cpu().numpy()
                 fig, axes = plt.subplots(1, 3, figsize=(30, 5))
                 for i, ax in enumerate(axes):

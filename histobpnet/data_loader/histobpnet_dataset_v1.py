@@ -39,6 +39,7 @@ class HistoBPNetDatasetV1(ChromBPNetDataset):
             inputlen, outputlen, max_jitter,
             cts_ctrl_bw_file=config.bigwig_ctrl, output_bins=output_bins,
             mode=mode,
+            pass_zero_mode=config.pass_zero_mode,
         )
 
         # peak_cts is an array of shape (num_peaks, max(output_bins))

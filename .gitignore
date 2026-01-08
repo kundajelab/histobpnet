@@ -198,3 +198,4 @@ wandb/
 .vscode/
 local/
 *.npy
+data/

@@ -48,7 +48,7 @@ class HistoBPNetWrapperV2(ModelWrapper):
         self.metrics[mode]['targets'].append(true_logsum)
         self.metrics[mode]['peak_status'].append(batch['peak_status'])
 
-        # TODO does mse in log space make sense? that's what bpnet does though (see def _step)
+        # does mse in log space make sense? that's what bpnet does though (see def _step)
         mse_elements = (y_count - true_logsum) ** 2     # shape: (batch_size, 1)
         count_loss = mse_elements.mean()
         loss = count_loss

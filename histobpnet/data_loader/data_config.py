@@ -35,6 +35,7 @@ class DataConfig:
         atac_hgp_map: str = None,
         outlier_threshold: float = 0.999,
         skip_missing_hist: str = "N/A",
+        pass_zero_mode: str = "N/A",
         exclude_chroms: List = None,
         batch_size: int = 64,
         num_workers: int = 16,
@@ -83,6 +84,7 @@ class DataConfig:
         self.out_window = out_window
         self.atac_hgp_map = atac_hgp_map
         self.skip_missing_hist = skip_missing_hist
+        self.pass_zero_mode = pass_zero_mode
         self.ctrl_scaling_factor = ctrl_scaling_factor
         self.outputlen_neg = outputlen_neg
         self.shift = shift
@@ -139,6 +141,7 @@ class DataConfig:
         self._validate_model_type()
         self._validate_output_bins()
         self._validate_skip_missing_hist()
+        self._validate_pass_zero_mode()
 
     def _validate_paths(self):
         """Validate that all required files exist."""
@@ -192,3 +195,7 @@ class DataConfig:
     def _validate_skip_missing_hist(self):
         valids = ["Yes", "No", "N/A"]
         assert self.skip_missing_hist in valids
+
+    def _validate_pass_zero_mode(self):
+        valids = ["zero_seq", "zero_ctl", "zero_cts", "N/A"]
+        assert self.pass_zero_mode in valids
