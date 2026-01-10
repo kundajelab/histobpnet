@@ -569,3 +569,58 @@ python /home/valehvpa/projects/scCisTrans/histobpnet/scripts/train/main.py \
     --skip_missing_hist Yes \
     --use_linear_w_ctrl \
     --pass_zero_mode zero_ctl
+
+
+########################################
+
+# v2 w/ dont feed ctrl zero_seq (use_linear_w_ctrl is now True by default to match TF bpnet)
+python /home/valehvpa/projects/scCisTrans/histobpnet/scripts/train/main.py \
+    --command train \
+    --name hv2-finetune-csf1.0-closest-olneg1k-skip_oob_hgp-no_feed_ctrl \
+    --model_type histobpnet_v2 \
+    --cvd 0 \
+    --output_dir /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/train \
+    --peaks /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/gm12878_atac_encode/ENCFF971WEQ/peaks.all_input_regions.ENCSR637XSC.bed.gz \
+    --negatives /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/gm12878_atac_encode/ENCFF971WEQ/fold_0/nonpeaks.all_input_regions.fold_0.ENCSR637XSC.bed.gz \
+    --bigwig /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_borzoi/histone/peak_scramble/maya_coverage/all_reps.bw \
+    --bigwig_ctrl /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_borzoi/histone/peak_scramble/maya_coverage/inputc/inputc.bw \
+    --atac_hgp_map /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/reverse_gapped_peak_histone_closest_2114bp_atac_within_1k_bound.bed \
+    --chrombpnet_wo_bias /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/gm12878_atac_encode/ENCFF142IOR/fold_0/model.chrombpnet_nobias.fold_0.ENCSR637XSC.h5 \
+    --ctrl_scaling_factor 1.0 \
+    --outputlen_neg 1000 \
+    --skip_missing_hist Yes \
+    --feed_ctrl False
+
+python /home/valehvpa/projects/scCisTrans/histobpnet/scripts/train/main.py \
+    --command train \
+    --name hv2-scratch-csf1.0-closest-olneg1k-skip_oob_hgp-no_feed_ctrl \
+    --model_type histobpnet_v2 \
+    --cvd 0 \
+    --output_dir /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/train \
+    --peaks /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/gm12878_atac_encode/ENCFF971WEQ/peaks.all_input_regions.ENCSR637XSC.bed.gz \
+    --negatives /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/gm12878_atac_encode/ENCFF971WEQ/fold_0/nonpeaks.all_input_regions.fold_0.ENCSR637XSC.bed.gz \
+    --bigwig /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_borzoi/histone/peak_scramble/maya_coverage/all_reps.bw \
+    --bigwig_ctrl /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_borzoi/histone/peak_scramble/maya_coverage/inputc/inputc.bw \
+    --atac_hgp_map /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/reverse_gapped_peak_histone_closest_2114bp_atac_within_1k_bound.bed \
+    --ctrl_scaling_factor 1.0 \
+    --outputlen_neg 1000 \
+    --skip_missing_hist Yes \
+    --feed_ctrl False
+
+python /home/valehvpa/projects/scCisTrans/histobpnet/scripts/train/main.py \
+    --command predict \
+    --name hv2-finetune-csf1.0-closest-olneg1k-skip_oob_hgp-predict \
+    --model_type histobpnet_v2 \
+    --cvd 0 \
+    --output_dir /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/predict \
+    --checkpoint /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/train/instance-20260108_111226/pt_artifacts/best_model.ckpt \
+    --peaks /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/gm12878_atac_encode/ENCFF971WEQ/peaks.all_input_regions.ENCSR637XSC.bed.gz \
+    --negatives /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/gm12878_atac_encode/ENCFF971WEQ/fold_0/nonpeaks.all_input_regions.fold_0.ENCSR637XSC.bed.gz \
+    --bigwig /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_borzoi/histone/peak_scramble/maya_coverage/all_reps.bw \
+    --bigwig_ctrl /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_borzoi/histone/peak_scramble/maya_coverage/inputc/inputc.bw \
+    --atac_hgp_map /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/reverse_gapped_peak_histone_closest_2114bp_atac_within_1k_bound.bed \
+    --ctrl_scaling_factor 1.0 \
+    --outputlen_neg 1000 \
+    --skip_missing_hist Yes \
+    --feed_ctrl False \
+    --pass_zero_mode zero_seq

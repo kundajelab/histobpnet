@@ -35,9 +35,15 @@ class HistoBPNetWrapperV3(ModelWrapper):
         assert x.shape[0] == true_logsum.shape[0], "Batch size of input sequence and true_logsum must match"
         assert x.shape[0] == true_logsum_ctl.shape[0], "Batch size of input sequence and true_logsum_ctl must match"
         
-        _, y_count = self(x, observed_ctrl=true_logsum_ctl) # batch_size x 1
-        y_count = y_count.squeeze(-1)
-
+        if self.model.config.feed_ctrl:
+            _, y_count = self(x, observed_ctrl=true_logsum_ctl) # batch_size x 1
+            y_count = y_count.squeeze(-1)
+        if not self.model.config.feed_ctrl:
+            print("Not feeding control track into model...")
+            _, y_lfc = self(x, observed_ctrl=None) # batch_size x 1
+            y_lfc = y_lfc.squeeze(-1)
+            y_count = y_lfc + true_logsum_ctl
+            
         if mode == 'predict':
             return {
                 'pred_count': to_numpy(y_count),

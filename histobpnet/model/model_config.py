@@ -25,7 +25,8 @@ class BPNetModelConfig(BaseConfig):
         n_outputs: int = 1,
         profile_output_bias: bool = True, 
         count_output_bias: bool = True,
-        use_linear_w_ctrl: bool = False,
+        use_linear_w_ctrl: bool = True,
+        feed_ctrl: bool = True,
         # these are parameters whose default values can vary based on model_type
         out_dim: int = None,
         n_count_outputs: int = None,
@@ -51,7 +52,8 @@ class BPNetModelConfig(BaseConfig):
         self.count_output_bias = count_output_bias
         self.n_count_outputs = n_count_outputs
         self.use_linear_w_ctrl = use_linear_w_ctrl
-        
+        self.feed_ctrl = feed_ctrl
+
         if self.out_dim is None:
             if model_type == "chrombpnet":
                 self.out_dim = 1000

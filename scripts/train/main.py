@@ -3,7 +3,6 @@ import argparse
 import sys
 from lightning.pytorch.strategies import DDPStrategy
 import lightning as L
-import torch
 import json
 import time
 import wandb
@@ -19,7 +18,6 @@ from histobpnet.model.bpnet_wrapper import BPNetWrapper, ChromBPNetWrapper
 from histobpnet.model.histobpnet_wrapper_v1 import HistoBPNetWrapperV1
 from histobpnet.model.histobpnet_wrapper_v2 import HistoBPNetWrapperV2
 from histobpnet.model.histobpnet_wrapper_v3 import HistoBPNetWrapperV3
-from histobpnet.model.model_wrappers import adjust_bias_model_logcounts
 
 def get_parsers():
     parser = argparse.ArgumentParser()
