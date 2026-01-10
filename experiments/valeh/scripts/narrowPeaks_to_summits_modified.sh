@@ -2,15 +2,15 @@
 
 set -euo pipefail
 
-dir=/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/gm12878_atac_encode/data
+dir=/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/gm12878_atac_encode/ENCFF971WEQ
 out_dir=/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data
-file_name=peaks.all_input_regions.ENCSR868FGK
+file_name=peaks.all_input_regions.ENCSR637XSC
 
 cd "$out_dir"
 
 for X in 2114; do
     half=$((X / 2))
-    out="${file_name}.summits.${X}bp.sorted.bed"
+    out="${file_name}.summits.${X}bp.sorted.lexicographic.bed"
 
     # skip if compressed file already exists
     if [ -f "${out}.gz" ]; then
@@ -26,7 +26,7 @@ for X in 2114; do
             end   = s + h
             print $1, start, end, $4, $5, $6
         }' OFS="\t" \
-        | sort -k1,1V -k2,2n \
+        | sort -k1,1 -k2,2n \
         > "${out}"
 
     echo "bgzipping ${out}..."

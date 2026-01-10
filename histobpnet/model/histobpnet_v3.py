@@ -12,6 +12,8 @@ class HistoBPNetV3(nn.Module):
     ):
         super().__init__()
 
+        n_cc = config.n_control_tracks if config.feed_ctrl else 0
+        
         self.bpnet = BPNet(
             n_filters = config.n_filters, 
             n_layers = config.n_layers, 
@@ -19,14 +21,15 @@ class HistoBPNetV3(nn.Module):
             conv1_kernel_size = config.conv1_kernel_size,
             profile_kernel_size = config.profile_kernel_size,
             n_outputs = config.n_outputs, 
-            n_control_tracks = config.n_control_tracks, 
+            n_control_tracks = n_cc, 
             profile_output_bias = config.profile_output_bias, 
             count_output_bias = config.count_output_bias, 
             n_count_outputs=config.n_count_outputs,
             for_histone='histobpnet_v3',
+            use_linear_w_ctrl=config.use_linear_w_ctrl,
         )
 
-        self.n_control_tracks = config.n_control_tracks
+        self.n_control_tracks = n_cc
         self.config = config
 
         self.tf_style_reinit()

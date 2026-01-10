@@ -3,7 +3,6 @@ import argparse
 import sys
 from lightning.pytorch.strategies import DDPStrategy
 import lightning as L
-import torch
 import json
 import time
 import wandb
@@ -12,14 +11,13 @@ from toolbox.logger import SimpleLogger
 
 from histobpnet.data_loader.data_config import DataConfig
 from histobpnet.model.model_config import BPNetModelConfig
-from histobpnet.data_loader.dataset import DataModule
+from histobpnet.data_loader.datamodule import DataModule
 from histobpnet.eval.metrics import compare_with_observed, save_predictions, load_output_to_regions
 from histobpnet.utils.general_utils import is_histone
 from histobpnet.model.bpnet_wrapper import BPNetWrapper, ChromBPNetWrapper
 from histobpnet.model.histobpnet_wrapper_v1 import HistoBPNetWrapperV1
 from histobpnet.model.histobpnet_wrapper_v2 import HistoBPNetWrapperV2
 from histobpnet.model.histobpnet_wrapper_v3 import HistoBPNetWrapperV3
-from histobpnet.model.model_wrappers import adjust_bias_model_logcounts
 
 def get_parsers():
     parser = argparse.ArgumentParser()
@@ -122,8 +120,10 @@ def setup(instance_id: str):
 def train(args, output_dir: str, logger):
     logger.add_to_log(f"Training with model type: {args.model_type}")
 
-    data_config = DataConfig.from_argparse_args(args)
-    data_config.set_additional_args(args.output_bins, args.model_type)
+    data_config = DataConfig.from_argparse_args(
+        args,
+        extra_kwargs={"output_bins": args.output_bins, "model_type": args.model_type}
+    )
 
     datamodule = DataModule(data_config, len(args.gpu))
     if is_histone(args.model_type):
@@ -139,6 +139,10 @@ def train(args, output_dir: str, logger):
     pt_output_dir = os.path.join(output_dir, "pt_artifacts")
     os.makedirs(pt_output_dir, exist_ok=False)
 
+    loggers = [
+        L.pytorch.loggers.WandbLogger(save_dir=pt_output_dir),
+        L.pytorch.loggers.CSVLogger(pt_output_dir)
+    ]
     trainer = L.Trainer(
         max_epochs=args.max_epochs,
         # valeh: why not 0? TODO_later ask Lei
@@ -157,12 +161,16 @@ def train(args, output_dir: str, logger):
         # last.ckpt will be the model as it was at epoch 17, the early-stopped point
         callbacks=[
             L.pytorch.callbacks.EarlyStopping(monitor='val_loss', patience=5),
-            L.pytorch.callbacks.ModelCheckpoint(monitor='val_loss', save_top_k=1, mode='min', filename='best_model', save_last=True),
+            L.pytorch.callbacks.ModelCheckpoint(
+                monitor='val_loss',
+                save_top_k=1,
+                mode='min',
+                filename='best_model',
+                save_last=True,
+                dirpath=pt_output_dir,
+            ),
         ],
-        logger=[
-            L.pytorch.loggers.WandbLogger(save_dir=pt_output_dir),
-            L.pytorch.loggers.CSVLogger(pt_output_dir)
-        ],
+        logger=loggers,
         fast_dev_run=args.fast_dev_run,
         precision=args.precision,
         gradient_clip_val=args.gradient_clip,
@@ -181,8 +189,15 @@ def train(args, output_dir: str, logger):
     # return the path to the best_model.ckpt
     return os.path.join(trainer.checkpoint_callback.dirpath, 'best_model.ckpt')
 
-def predict(args, output_dir: str, model, logger, mode='predict', chrom: str=None):
-    trainer = L.Trainer(logger=False, accelerator='gpu', fast_dev_run=args.fast_dev_run, devices=args.gpu, val_check_interval=None)
+def predict(args, output_dir: str, checkpoint: str, logger, mode: str='predict', chrom: str=None):
+    logger.add_to_log(f"Predicting with model type: {args.model_type}")
+
+    model = create_model_wrapper(args, checkpoint=checkpoint)
+
+    pt_output_dir = os.path.join(output_dir, "pt_artifacts_pred")
+    os.makedirs(pt_output_dir, exist_ok=False)
+    trainer = L.Trainer(logger=L.pytorch.loggers.WandbLogger(save_dir=pt_output_dir),
+                        accelerator='gpu', fast_dev_run=args.fast_dev_run, devices=args.gpu, val_check_interval=None)
 
     # TODO_later log these
     # print("accelerator:", trainer.accelerator)              # object, e.g. GPUAccelerator(...)
@@ -201,8 +216,10 @@ def predict(args, output_dir: str, model, logger, mode='predict', chrom: str=Non
     # print("fast_dev_run:", trainer.fast_dev_run)            # True / False / int
     # print("max_epochs:", trainer.max_epochs)
 
-    data_config = DataConfig.from_argparse_args(args)
-    data_config.set_additional_args(output_bins=args.output_bins, model_type=args.model_type)
+    data_config = DataConfig.from_argparse_args(
+        args,
+        extra_kwargs={"output_bins": args.output_bins, "model_type": args.model_type}
+    )
     dm = DataModule(data_config, len(args.gpu))
     model_config = model.get_model_config()
 
@@ -214,9 +231,9 @@ def predict(args, output_dir: str, model, logger, mode='predict', chrom: str=Non
     od = os.path.join(output_dir, mode, chr)
     os.makedirs(od, exist_ok=False)
     regions, parsed_output = load_output_to_regions(output, dataset.regions, od)
+    # currently we only predict counts for histobpnet
     skip_profile = is_histone(data_config.model_type)
-    compare_with_observed(regions, parsed_output, od, skip_profile=skip_profile)
-    # currently only predict counts for histobpnet
+    compare_with_observed(regions, parsed_output, od, skip_profile=skip_profile, model_wrapper=model, wandb_log_name=chr)
     if not skip_profile:
         save_predictions(output, regions, data_config.chrom_sizes, od, seqlen=model_config.out_dim)
 
@@ -288,11 +305,9 @@ def main(instance_id: str):
 
     if args.command == 'train':
         best_model_ckpt = train(args, output_dir, logger)
-        model = create_model_wrapper(args, checkpoint=best_model_ckpt)
-        predict(args, output_dir, model, logger, chrom="test")
+        predict(args, output_dir, best_model_ckpt, logger, chrom="test")
     elif args.command == 'predict':
-        model = create_model_wrapper(args, checkpoint=args.checkpoint)
-        predict(args, output_dir, model, logger)
+        predict(args, output_dir, args.checkpoint, logger)
     elif args.command == 'interpret':
         model = create_model_wrapper(args, checkpoint=args.checkpoint)
         interpret(args, model)
@@ -306,8 +321,8 @@ if __name__ == '__main__':
     instance_id = get_instance_id()
     print(f"*** Using instance_id: {instance_id}")
 
-    # set_random_seed(seed=1234, skip_tf=True)
-    L.seed_everything(1234)
+    set_random_seed(seed=42, skip_tf=True)
+    # L.seed_everything(1234)
     t0 = time.time()
     logger = main(instance_id)
     tt = time.time() - t0

@@ -64,7 +64,7 @@ def load_region_df(
     is_peak: bool=True,
     logger=None,
     width=None,
-    skip_missing_hist=False,
+    skip_missing_hist="N/A",
     atac_hgp_map="",
 ):
     """
@@ -108,10 +108,12 @@ def load_region_df(
 
     add_peak_id(filtered_df)
 
-    # filter out any regions that dont have a matching histone peak
-    if skip_missing_hist:
+    if skip_missing_hist == "Yes":
+        # filter out any regions that dont have a matching histone peak
         assert atac_hgp_map != ""
-        atac_hgp_df = pd.read_csv(atac_hgp_map, sep="\t", header=0)
+        atac_hgp_df = pd.read_csv(atac_hgp_map, sep="\t", header=None, names=[
+            "chrom", "start", "end", "hist_chrom", "hist_start", "hist_end"
+        ])
         add_peak_id(atac_hgp_df, chr_key="chrom")
         merged = filtered_df.merge(
             atac_hgp_df[["peak_id", "hist_chrom", "hist_start", "hist_end"]],
@@ -166,8 +168,9 @@ def get_cts(
     width,
     atac_hgp_df=None,
     get_total_cts: bool = False,
-    skip_missing_hist: bool = False,
+    skip_missing_hist: str = "N/A",
     ctrl_scaling_factor: float = 1.0,
+    pass_zero: bool = False,
 ):
     """
     Fetches values from a bigwig bw, given a df with minimally
@@ -200,7 +203,13 @@ def get_cts(
             if pd.isna(r['hist_chrom']):
                 raise ValueError(f"No matching ATAC-Histone mapping found for region: {r['chr']}:{r['start']}-{r['end']}")
             elif r.hist_chrom == '.':
-                assert not skip_missing_hist, "skip_missing_hist is True but found missing histone peak."
+                # skip_missing_hist could be Yes, which is not expected here
+                # or No, in which case we use 0
+                # or N/A in which case we also use 0. This is the case for example when we use closest hgp's
+                # in which case there is almost always one such hgp (so we pass N/A for skip_missing_hist) but
+                # for very rare cases there can still be a missing hgp if there is no closest hgp on the same chr 
+                # for example (in gm12878 I saw two such atac peaks) and in those cases it's ok to just pass 0
+                assert skip_missing_hist != "Yes", "skip_missing_hist is Yes but found missing histone peak."
                 if get_total_cts:
                     vals.append(np.array([0]))
                 else:
@@ -208,35 +217,48 @@ def get_cts(
             else:
                 if not get_total_cts:
                     assert ctrl_scaling_factor == 1.0, "Not yet implemented...."
-                    raw = bw.values(r.hist_chrom, r.hist_start, r.hist_end)
+                    assert pass_zero is False, "Not yet implemented...."
+                    # not sure why but sometimes it sees hist_start/end as floats ¯\_(ツ)_/¯
+                    raw = bw.values(r.hist_chrom, int(r.hist_start), int(r.hist_end))
                     # pad to width w/ 0
                     padded = np.zeros(width, dtype=float)
                     padded[:len(raw)] = raw
                     # TODO_later should prob make this a sparse matrix. also validate 
                     vals.append(np.nan_to_num(padded))
                 else:
-                    vals.append(np.array([
-                        ctrl_scaling_factor * np.nansum(bw.values(r.hist_chrom, r.hist_start, r.hist_end))
-                    ]))
+                    try:
+                        if pass_zero:
+                            vals.append(np.array([0]))
+                        else:
+                            vals.append(np.array([
+                                ctrl_scaling_factor * np.nansum(bw.values(r.hist_chrom, int(r.hist_start), int(r.hist_end)))
+                            ]))
+                    except:
+                        print("Error fetching values for region:", r)
+                        raise
     else:
         for _, r in peaks_df.iterrows():
             if not get_total_cts:
                 assert ctrl_scaling_factor == 1.0, "Not yet implemented...."
+                assert pass_zero is False, "Not yet implemented...."
                 vals.append(
                     np.nan_to_num(bw.values(r['chr'],
                                             r['start'] + r['summit'] - width//2,
                                             r['start'] + r['summit'] + width//2))
                 )
             else:
-                vals.append(np.array([
-                    ctrl_scaling_factor * np.nansum(bw.values(r['chr'],
-                                                            r['start'] + r['summit'] - width//2,
-                                                            r['start'] + r['summit'] + width//2))
-                ]))
+                if pass_zero:
+                    vals.append(np.array([0]))
+                else:
+                    vals.append(np.array([
+                        ctrl_scaling_factor * np.nansum(bw.values(r['chr'],
+                                                                r['start'] + r['summit'] - width//2,
+                                                                r['start'] + r['summit'] + width//2))
+                    ]))
 
     return np.array(vals)
 
-def get_seq(peaks_df, genome, width):
+def get_seq(peaks_df, genome, width, pass_zero: bool = False,):
     """
     Same as get_cts, but fetches sequence from a given genome.
     """
@@ -245,6 +267,9 @@ def get_seq(peaks_df, genome, width):
         sequence = str(genome[r['chr']][(r['start']+r['summit'] - width//2):(r['start'] + r['summit'] + width//2)])
         vals.append(sequence)
 
+    if pass_zero:
+        return np.zeros((len(vals), width, 4), dtype=np.int8)
+    
     return dna_to_one_hot(vals)
 
 def get_coords(peaks_df, peaks_bool):
@@ -268,89 +293,39 @@ def get_seq_cts_coords(
     peaks_bool,
     atac_hgp_df=None,
     get_total_cts: bool = False,
-    skip_missing_hist: bool = False,
+    skip_missing_hist: str = "N/A",
     mode: str = "",
     ctrl_scaling_factor: float = 1.0,
+    pass_zero_mode: str = "N/A",
 ):
-    read_cache = False
-    print("Reading from cache:", read_cache)
+    seq = get_seq(peaks_df, genome, input_width, pass_zero=(pass_zero_mode=="zero_seq"))
 
-    # TODO_later remove this after im done debugging
-    peaks_str = "peaks" if peaks_bool==1 else "nonpeaks"
-    smh_str = "smh" if skip_missing_hist else "nosmh"
+    cts = get_cts(
+        peaks_df,
+        bw,
+        output_width,
+        atac_hgp_df=atac_hgp_df,
+        get_total_cts=get_total_cts,
+        skip_missing_hist=skip_missing_hist,
+        ctrl_scaling_factor=ctrl_scaling_factor,
+        pass_zero=(pass_zero_mode=="zero_cts"),
+    )
 
-    if read_cache:
-        temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/cache/seqs_{mode}_{peaks_str}_{str(ctrl_scaling_factor)}.npy"
-        if not os.path.isfile(temp_p):
-            seq = get_seq(peaks_df, genome, input_width)
-            np.save(temp_p, seq)
-        else:
-            seq = np.load(temp_p)
-    else:
-        seq = get_seq(peaks_df, genome, input_width)
+    cts_ctrl = get_cts(
+        peaks_df,
+        bw_ctrl,
+        output_width,
+        atac_hgp_df=atac_hgp_df,
+        get_total_cts=get_total_cts,
+        skip_missing_hist=skip_missing_hist,
+        ctrl_scaling_factor=ctrl_scaling_factor,
+        pass_zero=(pass_zero_mode=="zero_ctl"),
+    ) if bw_ctrl is not None else None
 
-    if read_cache:
-        if ctrl_scaling_factor != 1.0:
-            file_name = f"cts_{mode}_{peaks_str}_{smh_str}_{str(ctrl_scaling_factor)}_fast.npy"
-        else:
-            file_name = f"cts_{mode}_{peaks_str}_{smh_str}_fast.npy"
-        temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/cache/{file_name}"
-        if not os.path.isfile(temp_p):
-            cts = get_cts(
-                peaks_df,
-                bw,
-                output_width,
-                atac_hgp_df=atac_hgp_df,
-                get_total_cts=get_total_cts,
-                skip_missing_hist=skip_missing_hist,
-                ctrl_scaling_factor=ctrl_scaling_factor,
-            )
-            np.save(temp_p, cts)
-        else:
-            cts = np.load(temp_p)
-    else:
-        cts = get_cts(
-                peaks_df,
-                bw,
-                output_width,
-                atac_hgp_df=atac_hgp_df,
-                get_total_cts=get_total_cts,
-                skip_missing_hist=skip_missing_hist,
-                ctrl_scaling_factor=ctrl_scaling_factor,
-            )
-
-    if bw_ctrl is None:
-        cts_ctrl = None
-    else:
-        if read_cache:
-            if ctrl_scaling_factor != 1.0:
-                file_name = f"cts_ctrl_{mode}_{peaks_str}_{smh_str}_{str(ctrl_scaling_factor)}_fast.npy"
-            else:
-                file_name = f"cts_ctrl_{mode}_{peaks_str}_{smh_str}_fast.npy"
-            temp_p = f"/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/cache/{file_name}"
-            if not os.path.isfile(temp_p):
-                cts_ctrl = get_cts(
-                    peaks_df,
-                    bw_ctrl,
-                    output_width,
-                    atac_hgp_df=atac_hgp_df,
-                    get_total_cts=get_total_cts,
-                    skip_missing_hist=skip_missing_hist,
-                    ctrl_scaling_factor=ctrl_scaling_factor,
-                )
-                np.save(temp_p, cts_ctrl)
-            else:
-                cts_ctrl = np.load(temp_p)
-        else:
-            cts_ctrl = get_cts(
-                peaks_df,
-                bw_ctrl,
-                output_width,
-                atac_hgp_df=atac_hgp_df,
-                get_total_cts=get_total_cts,
-                skip_missing_hist=skip_missing_hist,
-                ctrl_scaling_factor=ctrl_scaling_factor,
-            )
+    if pass_zero_mode != "N/A":
+        # sanity check
+        print("sums w/ pass_zero_mode {}: ".format(pass_zero_mode),
+              np.sum(seq), np.sum(cts), np.sum(cts_ctrl) if cts_ctrl is not None else "no ctl")
 
     coords = get_coords(peaks_df, peaks_bool)
     return seq, cts, cts_ctrl, coords
@@ -367,10 +342,11 @@ def load_data(
     output_bins = None,
     atac_hgp_df = None,
     get_total_cts = False,
-    skip_missing_hist = False,
+    skip_missing_hist = "N/A",
     mode: str = "",
     ctrl_scaling_factor: float = 1.0,
     outputlen_neg: int = None,
+    pass_zero_mode: str = "N/A",
 ):
     """
     Load sequences and corresponding base resolution counts for training, 
@@ -424,6 +400,7 @@ def load_data(
             skip_missing_hist=skip_missing_hist,
             mode=mode,
             ctrl_scaling_factor=ctrl_scaling_factor,
+            pass_zero_mode=pass_zero_mode,
         )
     
     if nonpeak_regions is not None:
@@ -442,6 +419,7 @@ def load_data(
             skip_missing_hist=skip_missing_hist,
             mode=mode,
             ctrl_scaling_factor=ctrl_scaling_factor,
+            pass_zero_mode=pass_zero_mode,
         )
 
     cts_bw.close()
@@ -645,17 +623,6 @@ def hdf5_to_bigwig(
         use_tqdm=tqdm
     )
 
-def debug_subsample(peak_regions, chrom=None):
-    if peak_regions is None:
-        return None
-
-    if chrom is None:
-        chrom = peak_regions['chr'].unique()[0]
-
-    peak_regions = peak_regions[peak_regions['chr'] == chrom]
-    # print('debugging on ', chrom, 'shape', peak_regions.shape)
-    return peak_regions.reset_index(drop=True)
-
 # https://stackoverflow.com/questions/46091111/python-slice-array-at-different-position-on-every-row
 def take_per_row(A, indx, num_elem):
     """
@@ -727,27 +694,25 @@ def random_rev_comp(seqs, labels, labels_ctrl, coords, frac=0.5):
 
     NOTE: Performs in-place modification.
     """
+    assert frac > 0
     assert labels_ctrl is None, "Not implemented for labels_ctrl yet."
     pos_to_rc = np.random.choice(range(seqs.shape[0]), size=int(seqs.shape[0]*frac), replace=False)
     seqs[pos_to_rc] = seqs[pos_to_rc, ::-1, ::-1]
     labels[pos_to_rc] = labels[pos_to_rc, ::-1]
     coords[pos_to_rc,2] =  "r"
 
-    return seqs, labels, labels_ctrl, coords
-
-def revcomp_shuffle_augment(seqs, labels, labels_ctrl, coords, add_revcomp, rc_frac=0.5, shuffle=False):
+def revcomp_shuffle_augment(seqs, labels, labels_ctrl, coords, rc_frac=0.5, shuffle=False):
     """
     seqs: B x IL x 4
     labels: B x OL
     """
     assert(seqs.shape[0]==labels.shape[0])
 
-    # this does not modify seqs and labels
     mod_seqs, mod_labels, mod_labels_ctrl, mod_coords = seqs, labels, labels_ctrl, coords
 
-    # this modifies mod_seqs, mod_labels in-place
-    if add_revcomp:
-        mod_seqs, mod_labels, mod_labels_ctrl, mod_coords = random_rev_comp(mod_seqs, mod_labels, mod_labels_ctrl, mod_coords, frac=rc_frac)
+    if rc_frac > 0:
+        # this modifies in-place!!
+        random_rev_comp(mod_seqs, mod_labels, mod_labels_ctrl, mod_coords, frac=rc_frac)
 
     if shuffle:
         perm = np.random.permutation(mod_seqs.shape[0])
@@ -765,7 +730,7 @@ def crop_revcomp_data(
     per_bin_peak_cts_dict=None, per_bin_peak_cts_ctrl_dict=None,
     per_bin_nonpeak_cts_dict=None, per_bin_nonpeak_cts_ctrl_dict=None,
     inputlen=2114, outputlen=1000, output_bins: list = None,
-    add_revcomp=False, negative_sampling_ratio=0.1, shuffle=False, do_crop=True, rc_frac: float=0.5):
+    negative_sampling_ratio=0.1, shuffle=False, do_crop=True, rc_frac: float=0.5):
     """Apply random cropping and reverse complement augmentation to the data.
         
         This method:
@@ -849,11 +814,9 @@ def crop_revcomp_data(
         raise ValueError("Both peak and non-peak arrays are empty")
 
     # Apply revcomp and shuffle augmentations
-    # if rc_frac == 0, there is nothing to revcomp
-    if (add_revcomp and rc_frac > 0) or shuffle:
-        seqs, cts, cts_ctrl, coords = revcomp_shuffle_augment(
-            seqs, cts, cts_ctrl, coords,
-            add_revcomp, shuffle=shuffle, rc_frac=rc_frac
-        )
+    seqs, cts, cts_ctrl, coords = revcomp_shuffle_augment(
+        seqs, cts, cts_ctrl, coords,
+        shuffle=shuffle, rc_frac=rc_frac
+    )
 
     return seqs, cts, cts_ctrl, coords, peak_status

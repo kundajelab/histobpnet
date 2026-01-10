@@ -1,5 +1,6 @@
 import torch
 import torch.nn.functional as F
+from histobpnet.utils.general_utils import is_histone
 
 # adapted from BPNet in bpnet-lite, credit goes to Jacob Schreiber <jmschreiber91@gmail.com>
 
@@ -60,6 +61,7 @@ class BPNet(torch.nn.Module):
         verbose: bool = False,
         n_count_outputs: int = 1,
         for_histone: str = None,
+        use_linear_w_ctrl: bool = True, # matches TF bpnet when True
     ):
         super().__init__()
 
@@ -70,6 +72,7 @@ class BPNet(torch.nn.Module):
         self.n_control_tracks = n_control_tracks
         self.verbose = verbose
         self.for_histone = for_histone
+        self.use_linear_w_ctrl = use_linear_w_ctrl
 
         self.name = name or "bpnet.{}.{}".format(n_filters, n_layers)
 
@@ -112,11 +115,25 @@ class BPNet(torch.nn.Module):
             n_count_control = n_control_tracks
         # will be used to pool (average) over sequence length
         self.global_avg_pool = torch.nn.AdaptiveAvgPool1d(1)
-        self.linear = torch.nn.Linear(
-            n_filters+n_count_control,
-            n_count_outputs,
-            bias=count_output_bias
-        )
+        if (n_count_control == 0) or (not use_linear_w_ctrl):
+            self.linear = torch.nn.Linear(
+                    n_filters+n_count_control,
+                    n_count_outputs,
+                    bias=count_output_bias
+                )
+        else:
+            # TODO should count_output_bias be for the first linear or the second?
+            self.linear = torch.nn.Linear(
+                n_filters,
+                # TODO 1 or n_count_outputs here?
+                1,
+                bias=count_output_bias
+            )
+            self.linear_w_ctrl = torch.nn.Linear(
+                1 + n_count_control,
+                n_count_outputs
+            )
+            
 
     def forward(self, x, x_ctl=None, x_ctl_hist=None):
         """A forward pass of the model.
@@ -198,15 +215,27 @@ class BPNet(torch.nn.Module):
         # x is of shape (batch_size, n_filters, length)
         # pred_count shape: (batch_size, n_filters)
         pred_count = self.global_avg_pool(x).squeeze(-1)
+
+        ctl = None
         if x_ctl is not None:
             # sum over strands and sequence length, then add a trailing dimension
             # output shape: (batch_size, 1)
             x_ctl = torch.sum(x_ctl, dim=(1, 2)).unsqueeze(-1)
-            pred_count = torch.cat([pred_count, torch.log1p(x_ctl)], dim=-1)
+            ctl = torch.log1p(x_ctl)
         # x_ctl_hist is of shape (batch_size, num_bins) if histobpnet_v1 else (batch_size, 1)
         if x_ctl_hist is not None:
-            pred_count = torch.cat([pred_count, x_ctl_hist.unsqueeze(-1)], dim=-1)
-        pred_count = self.linear(pred_count)
+            ctl = x_ctl_hist.unsqueeze(-1)
+            # I already pass log1p-ed data (see histobpnet_wrapper_v*), so no need to do it again here
+
+        if ctl is None:
+            pred_count = self.linear(pred_count)
+        else:
+            if not self.use_linear_w_ctrl:
+                pred_count = self.linear(torch.cat([pred_count, ctl], dim=-1))
+            else:
+                pred_count = self.linear(pred_count)
+                pred_count = self.linear_w_ctrl(torch.cat([pred_count, ctl], dim=-1))
+
         return pred_count
     
     def predict(self, x, forward_only=True):
@@ -331,10 +360,15 @@ class BPNet(torch.nn.Module):
             model.fconv.weight = convert_w(w[fname][k])
             model.fconv.bias = convert_b(w[fname][b])
 
-        if model.for_histone not in ('histobpnet_v1', 'histobpnet_v2', 'histobpnet_v3'):
-            # TODO do we want to / can we partially initialize the weights or something?
-            name = namer(prefix, "logcount_predictions")
-            model.linear.weight = torch.nn.Parameter(torch.tensor(w[name][k][:].T))
+        # TODO for hist models where model.use_linear_w_ctrl is False, do we want to / can
+        # we partially initialize the weights or something?
+        # if (not is_histone(model.for_histone)) or model.use_linear_w_ctrl, init weights
+        #
+        name = namer(prefix, "logcount_predictions")
+        incoming = torch.tensor(w[name][k][:]).T
+        if model.linear.weight.shape == incoming.shape:
+            print("Loading linear weights...")
+            model.linear.weight = torch.nn.Parameter(incoming)
             model.linear.bias = convert_b(w[name][b])
 
         return model

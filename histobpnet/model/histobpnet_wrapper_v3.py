@@ -35,9 +35,15 @@ class HistoBPNetWrapperV3(ModelWrapper):
         assert x.shape[0] == true_logsum.shape[0], "Batch size of input sequence and true_logsum must match"
         assert x.shape[0] == true_logsum_ctl.shape[0], "Batch size of input sequence and true_logsum_ctl must match"
         
-        _, y_count = self(x, observed_ctrl=true_logsum_ctl) # batch_size x 1
-        y_count = y_count.squeeze(-1)
-
+        if self.model.config.feed_ctrl:
+            _, y_count = self(x, observed_ctrl=true_logsum_ctl) # batch_size x 1
+            y_count = y_count.squeeze(-1)
+        if not self.model.config.feed_ctrl:
+            print("Not feeding control track into model...")
+            _, y_lfc = self(x, observed_ctrl=None) # batch_size x 1
+            y_lfc = y_lfc.squeeze(-1)
+            y_count = y_lfc + true_logsum_ctl
+            
         if mode == 'predict':
             return {
                 'pred_count': to_numpy(y_count),
@@ -48,7 +54,7 @@ class HistoBPNetWrapperV3(ModelWrapper):
         self.metrics[mode]['targets'].append(true_logsum)
         self.metrics[mode]['peak_status'].append(batch['peak_status'])
 
-        # TODO does mse in log space make sense? that's what bpnet does though (see def _step)
+        # does mse in log space make sense? that's what bpnet does though (see def _step)
         mse_elements = (y_count - true_logsum) ** 2     # shape: (batch_size, 1)
         count_loss = mse_elements.mean()
         loss = count_loss
