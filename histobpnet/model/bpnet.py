@@ -122,10 +122,10 @@ class BPNet(torch.nn.Module):
                     bias=count_output_bias
                 )
         else:
-            # TODO should count_output_bias be for the first linear or the second?
+            # TODO_later should count_output_bias be for the first linear or the second?
             self.linear = torch.nn.Linear(
                 n_filters,
-                # TODO 1 or n_count_outputs here?
+                # TODO_later 1 or n_count_outputs here?
                 1,
                 bias=count_output_bias
             )
@@ -134,7 +134,6 @@ class BPNet(torch.nn.Module):
                 n_count_outputs
             )
             
-
     def forward(self, x, x_ctl=None, x_ctl_hist=None):
         """A forward pass of the model.
 

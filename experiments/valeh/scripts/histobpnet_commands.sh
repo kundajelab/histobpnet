@@ -624,3 +624,41 @@ python /home/valehvpa/projects/scCisTrans/histobpnet/scripts/train/main.py \
     --skip_missing_hist Yes \
     --feed_ctrl False \
     --pass_zero_mode zero_seq
+
+########################################
+
+# v2 with new datasource (5p coverage based)
+python /home/valehvpa/projects/scCisTrans/histobpnet/scripts/train/main.py \
+    --command train \
+    --name hv2-finetune-csf1.0-closest-olneg1k-skip_oob_hgp-5prime \
+    --model_type histobpnet_v2 \
+    --cvd 0 \
+    --output_dir /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/train \
+    --peaks /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/gm12878_atac_encode/ENCFF971WEQ/peaks.all_input_regions.ENCSR637XSC.bed.gz \
+    --negatives /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/gm12878_atac_encode/ENCFF971WEQ/fold_0/nonpeaks.all_input_regions.fold_0.ENCSR637XSC.bed.gz \
+    --bigwig /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_borzoi/histone/peak_scramble/maya_coverage/5prime/chip/all_reps_5p_pooled.bw \
+    --bigwig_ctrl /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_borzoi/histone/peak_scramble/maya_coverage/5prime/inputc/inputc_shifted_5p_pooled.bw \
+    --atac_hgp_map /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/reverse_gapped_peak_histone_closest_2114bp_atac_within_1k_bound.bed \
+    --chrombpnet_wo_bias /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/gm12878_atac_encode/ENCFF142IOR/fold_0/model.chrombpnet_nobias.fold_0.ENCSR637XSC.h5 \
+    --ctrl_scaling_factor 1.0 \
+    --outputlen_neg 1000 \
+    --skip_missing_hist Yes
+
+########################################
+
+# v3 with new datasource and zero ctrl
+# 200, 500, 1k, 2k, 3k, 4k, 5k, 6k, 7k, 8k
+python /home/valehvpa/projects/scCisTrans/histobpnet/scripts/train/main.py \
+    --command train \
+    --name hv3-finetune-csf1.0-5p-ow500-zero_ctrl \
+    --model_type histobpnet_v3 \
+    --cvd 0 \
+    --output_dir /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v3/train \
+    --peaks /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/gm12878_atac_encode/ENCFF971WEQ/peaks.all_input_regions.ENCSR637XSC.bed.gz \
+    --negatives /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/gm12878_atac_encode/ENCFF971WEQ/fold_0/nonpeaks.all_input_regions.fold_0.ENCSR637XSC.bed.gz \
+    --bigwig /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_borzoi/histone/peak_scramble/maya_coverage/5prime/chip/all_reps_5p_pooled.bw \
+    --bigwig_ctrl /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_borzoi/histone/peak_scramble/maya_coverage/5prime/inputc/inputc_shifted_5p_pooled.bw \
+    --out_window 500 \
+    --ctrl_scaling_factor 1.0 \
+    --chrombpnet_wo_bias /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/gm12878_atac_encode/ENCFF142IOR/fold_0/model.chrombpnet_nobias.fold_0.ENCSR637XSC.h5 \
+    --pass_zero_mode zero_ctl

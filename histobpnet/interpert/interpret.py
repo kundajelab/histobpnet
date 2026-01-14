@@ -331,7 +331,6 @@ def _validate_input(X, name, shape=None, dtype=None, min_value=None,
 
 	return X
 
-
 def run_modisco_and_shap(
 		model, 
 		peaks, 
@@ -455,7 +454,6 @@ def run_modisco_and_shap(
 		os.path.join(out_dir, 'modisco_report.pdf')
 	)
 
-
 def generate_shap_dict(seqs, scores):
 	if isinstance(seqs, torch.Tensor):
 		seqs = seqs.cpu().numpy()
@@ -475,57 +473,3 @@ def generate_shap_dict(seqs, scores):
 		}
 
 	return d
-
-
-
-	
-
-
-if __name__ == '__main__':
-	import argparse
-	import torch
-	from .genome import hg38
-
-	parser = argparse.ArgumentParser(description='Run modisco')
-	parser.add_argument('--model', type=str, required=True)
-	parser.add_argument('--peaks', type=str, required=True)
-	parser.add_argument('--out_dir', type=str, required=True)
-	parser.add_argument('--task', type=str, default='profile')
-	parser.add_argument('--batch_size', type=int, default=32)
-	parser.add_argument('--sub_sample', type=int, default=None)
-	parser.add_argument('--chrom_sizes', type=str, default=hg38.chrom_sizes)
-	parser.add_argument('--debug', action='store_true')
-
-	args = parser.parse_args()
-
-	from .chrombpnet import BPNet
-	if args.model.endswith('.h5'):
-		model = BPNet.from_keras(args.model)
-	else:
-		model = BPNet.load_from_checkpoint(args.model)
-		
-	if args.task == 'both':
-		for task in ['counts', 'profile']:
-			run_modisco_and_shap(
-				model=model, 
-				peaks=args.peaks, 
-				out_dir=args.out_dir, 
-				task=task,
-				batch_size=args.batch_size, 
-				sub_sample=args.sub_sample, 
-				meme_file=MEME_FILE,
-				chrom_sizes=args.chrom_sizes,
-				debug=args.debug
-			)
-	else:
-		run_modisco_and_shap(
-			model=model, 
-			peaks=args.peaks, 
-			out_dir=args.out_dir, 
-			task=args.task,
-			batch_size=args.batch_size, 
-			sub_sample=args.sub_sample, 
-			meme_file=MEME_FILE,
-			chrom_sizes=args.chrom_sizes,
-			debug=args.debug
-		)

@@ -1,4 +1,5 @@
-Data was downloaded for the GM12878 LCL donor sequenced in this paper: xxx.
+Data was downloaded for the GM12878 LCL donor sequenced in this paper: "Extensive Variation in Chromatin States Across Humans
+" (DOI: 10.1126/science.1242510).
 Raw FASTQ_DIR were downloaded from SRA as follows (one replicate shown):
 - `prefetch SRR998177 --output-directory /path/to/myfolder`
 - `fasterq-dump /path/to/myfolder/SRR998177.sra \
@@ -7,7 +8,7 @@ Raw FASTQ_DIR were downloaded from SRA as follows (one replicate shown):
   --threads 16`
 - `gzip /path/to/myfolder/SRR998177_*.fastq`
 
-Then I concatenanted the reads from the 4th replicate which was split into 4 technical replicates (4.1 ie SRR998180, 4.2 ie SRR998181, 4.3 ie SRR998182, 4.4 ie SRR998183):
+Then I concatenated the reads from the 4th replicate which was split into 4 technical replicates (4.1 ie SRR998180, 4.2 ie SRR998181, 4.3 ie SRR998182, 4.4 ie SRR998183):
 ```bash
 FASTQ_DIR=/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/maya_2013/fastq
 

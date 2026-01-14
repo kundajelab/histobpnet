@@ -238,9 +238,11 @@ def predict(args, output_dir: str, checkpoint: str, logger, mode: str='predict',
         save_predictions(output, regions, data_config.chrom_sizes, od, seqlen=model_config.out_dim)
 
 # TODO review + interpret.py
-def interpret(args, args_d, model, datamodule=None):
+def interpret(args, output_dir: str, checkpoint: str, logger):
     from histobpnet.interpert.interpret import run_modisco_and_shap 
     
+    model = create_model_wrapper(args, checkpoint=args.checkpoint)
+
     if datamodule is None:
         data_config = DataConfig.from_argparse_args(args)
         datamodule = DataModule(data_config, args)
@@ -309,8 +311,7 @@ def main(instance_id: str):
     elif args.command == 'predict':
         predict(args, output_dir, args.checkpoint, logger)
     elif args.command == 'interpret':
-        model = create_model_wrapper(args, checkpoint=args.checkpoint)
-        interpret(args, model)
+        interpret(args, output_dir, args.checkpoint, logger)
     else:
         raise ValueError(f"Unknown command: {args.command}")
 
