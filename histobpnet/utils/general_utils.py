@@ -206,18 +206,3 @@ def strand_specific_start_site(df):
     df.loc[pos_strand, "End"] = df.loc[pos_strand, "Start"] + 1
     df.loc[neg_strand, "Start"] = df.loc[neg_strand, "End"] - 1
     return df
-
-# valeh: I think these are needed to do interpretability with DeepSHAP
-class _Exp(torch.nn.Module):
-    def __init__(self):
-        super(_Exp, self).__init__()
-
-    def forward(self, X):
-        return torch.exp(X)
-
-class _Log(torch.nn.Module):
-    def __init__(self):
-        super(_Log, self).__init__()
-
-    def forward(self, X):
-        return torch.log(X)

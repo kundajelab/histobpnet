@@ -40,6 +40,10 @@ class DataConfig:
         batch_size: int = 64,
         num_workers: int = 16,
         debug: bool = False,
+        deep_shap_type='counts', 
+        deep_shap_batch_size=64, 
+        modisco_max_seqlets=1000_000, 
+        modisco_width=500, 
         # these are parameters whose default values can vary based on model_type
         shift: int = None,
         rc_frac: float = None,
@@ -94,6 +98,10 @@ class DataConfig:
         self.num_workers = num_workers
         self.debug = debug
         self.fold = fold
+        self.deep_shap_type = deep_shap_type
+        self.deep_shap_batch_size = deep_shap_batch_size
+        self.modisco_max_seqlets = modisco_max_seqlets
+        self.modisco_width = modisco_width
 
         if self.shift is None:
             if self.model_type == "chrombpnet":

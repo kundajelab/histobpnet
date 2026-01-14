@@ -237,34 +237,40 @@ def predict(args, output_dir: str, checkpoint: str, logger, mode: str='predict',
     if not skip_profile:
         save_predictions(output, regions, data_config.chrom_sizes, od, seqlen=model_config.out_dim)
 
-# TODO review + interpret.py
 def interpret(args, output_dir: str, checkpoint: str, logger):
     from histobpnet.interpert.interpret import run_modisco_and_shap 
-    
     model = create_model_wrapper(args, checkpoint=args.checkpoint)
 
-    if datamodule is None:
-        data_config = DataConfig.from_argparse_args(args)
-        datamodule = DataModule(data_config, args)
-    model.to(f'cuda:{args_d["gpu"][0]}')
+    data_config = DataConfig.from_argparse_args(
+        args,
+        extra_kwargs={"output_bins": args.output_bins, "model_type": args.model_type}
+    )
+    dm = DataModule(data_config, len(args.gpu))
+    model_config = model.get_model_config()
 
-    out_dir = os.path.join(args_d["output_dir"], args.name, f'fold_{args.fold}')
+    # not sure what this is for
+    # model.to(f'cuda:{args_d["gpu"][0]}')
 
-    tasks = ['profile', 'counts'] if args.shap == 'both' else [args.shap]
+    basedir = os.path.join(args_d["output_dir"], f'fold_{args.fold}')
+    tasks = ['profile', 'counts'] if data_config.deep_shap_type == 'both' else [data_config.deep_shap_type]
     for task in tasks:
+        output_dir = os.makedirs(os.path.join(basedir, task), exist_ok=False)
         run_modisco_and_shap(
+            # it s the bpnet model/module inside chrombpnet for example
+            # why is bias not included here? -> b/c we want the contribution scores that arise from bias-corrected predictions
             model.model.model,
             data_config.peaks,
-            out_dir=os.path.join(out_dir, 'interpret'),
-            batch_size=args_d["batch_size"],
+            out_dir=output_dir,
             in_window=data_config.in_window,
             out_window=data_config.out_window,
+            fasta=data_config.fasta,
+            chrom_sizes=data_config.chrom_sizes,
+            batch_size=data_config.deep_shap_batch_size,
             task=task,
+            max_seqlets = data_config.modisco_max_seqlets,
+            width = data_config.modisco_width,
             debug=True,
         )
-    # out = model._mutagenesis(dataloader, debug=args.debug)
-    # os.makedirs(os.path.join(out_dir, 'interpret'), exist_ok=True)
-    # np.save(os.path.join(out_dir, 'interpret', 'mutagenesis.npy'), out)
 
 def create_model_wrapper(args, checkpoint: str = None, datamodule = None):
     """Factory function to create appropriate model wrapper.
