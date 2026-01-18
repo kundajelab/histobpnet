@@ -58,13 +58,13 @@ class HistoBPNetV2(nn.Module):
         ----------
         x: torch.tensor, shape=(batch_size, 4, 2114)
             A one-hot encoded sequence tensor.
+        observed_ctrl: torch.tensor, shape=(batch_size, n_control_tracks)
+            The observed log of the sum of the (scaled) raw input control counts.
 
         Returns
         -------
         y_counts: torch.tensor, shape=(batch_size,)
             The predicted log-count for each example.
-        observed_ctrl: torch.tensor, shape=(batch_size, n_control_tracks)
-            The observed log of the sum of the (scaled) raw input control counts.
         """
         y_counts = self.bpnet(x, x_ctl_hist=observed_ctrl)
 

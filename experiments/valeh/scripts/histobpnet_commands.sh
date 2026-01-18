@@ -636,7 +636,7 @@ python /home/valehvpa/projects/scCisTrans/histobpnet/scripts/train/main.py \
     --output_dir /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/train \
     --peaks /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/gm12878_atac_encode/ENCFF971WEQ/peaks.all_input_regions.ENCSR637XSC.bed.gz \
     --negatives /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/gm12878_atac_encode/ENCFF971WEQ/fold_0/nonpeaks.all_input_regions.fold_0.ENCSR637XSC.bed.gz \
-    --bigwig /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_borzoi/histone/peak_scramble/maya_coverage/5prime/chip/all_reps_5p_pooled.bw \
+    --bigwig /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_borzoi/histone/peak_scramble/maya_coverage/5prime/chip/all_reps_shifted_5p_pooled.bw \
     --bigwig_ctrl /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_borzoi/histone/peak_scramble/maya_coverage/5prime/inputc/inputc_shifted_5p_pooled.bw \
     --atac_hgp_map /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/reverse_gapped_peak_histone_closest_2114bp_atac_within_1k_bound.bed \
     --chrombpnet_wo_bias /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/gm12878_atac_encode/ENCFF142IOR/fold_0/model.chrombpnet_nobias.fold_0.ENCSR637XSC.h5 \
@@ -662,3 +662,53 @@ python /home/valehvpa/projects/scCisTrans/histobpnet/scripts/train/main.py \
     --ctrl_scaling_factor 1.0 \
     --chrombpnet_wo_bias /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/gm12878_atac_encode/ENCFF142IOR/fold_0/model.chrombpnet_nobias.fold_0.ENCSR637XSC.h5 \
     --pass_zero_mode zero_ctl
+
+########################################
+
+# interpert with chrombpnet gm12878 atac
+python /home/valehvpa/projects/scCisTrans/histobpnet/scripts/train/main.py \
+    --command interpret \
+    --name chrombpnet_gm12878_interpret \
+    --model_type chrombpnet \
+    --cvd 0 \
+    --output_dir /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/interpretation \
+    --peaks /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/gm12878_atac_encode/interpret/ENCFF877CRX_partial/logs.seq_contrib.counts.ENCSR637XSC/logs.seq_contrib.counts.input_regions.modisco.ENCSR637XSC.noLastCol.bed.gz \
+    --chrombpnet_wo_bias /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/gm12878_atac_encode/ENCFF142IOR/fold_0/model.chrombpnet_nobias.fold_0.ENCSR637XSC.h5 \
+    --skip_wandb \
+    --debug
+
+########################################
+
+# hv2 with k562
+python /home/valehvpa/projects/scCisTrans/histobpnet/scripts/train/main.py \
+    --command train \
+    --name hv2-k562-finetune-csf1.0-closest-olneg1k-skip_oob_hgp-5prime-unshifted \
+    --model_type histobpnet_v2 \
+    --cvd 0 \
+    --output_dir /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/train \
+    --peaks /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/k562_atac_encode/ENCFF991RUK/peaks.all_input_regions.ENCSR868FGK.bed.gz \
+    --negatives /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/k562_atac_encode/ENCFF991RUK/fold_0/nonpeaks.all_input_regions.fold_0.ENCSR868FGK.bed.gz \
+    --bigwig /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/encode/k562_h3k27ac/from_anusri/pooled.bw \
+    --bigwig_ctrl /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/encode/k562_h3k27ac/from_anusri/control_pooled.bw \
+    --atac_hgp_map /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/k562_atac_encode/processed/reverse_gapped_peak_histone_closest_2114bp_atac_within_1k_bound.bed \
+    --chrombpnet_wo_bias /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/k562_atac_encode/ENCFF984RAF/fold_0/model.chrombpnet_nobias.fold_0.ENCSR868FGK.h5 \
+    --ctrl_scaling_factor 1.0 \
+    --outputlen_neg 1000 \
+    --skip_missing_hist Yes
+
+# TODO hv2 with encode gm12878
+python /home/valehvpa/projects/scCisTrans/histobpnet/scripts/train/main.py \
+    --command train \
+    --name hv2-k562-finetune-csf1.0-closest-olneg1k-skip_oob_hgp-5prime \
+    --model_type histobpnet_v2 \
+    --cvd 0 \
+    --output_dir /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/train \
+    --peaks /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/gm12878_atac_encode/ENCFF971WEQ/peaks.all_input_regions.ENCSR637XSC.bed.gz \
+    --negatives /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/gm12878_atac_encode/ENCFF971WEQ/fold_0/nonpeaks.all_input_regions.fold_0.ENCSR637XSC.bed.gz \
+    --bigwig /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_borzoi/histone/peak_scramble/maya_coverage/5prime/chip/all_reps_shifted_5p_pooled.bw \
+    --bigwig_ctrl /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_borzoi/histone/peak_scramble/maya_coverage/5prime/inputc/inputc_shifted_5p_pooled.bw \
+    --atac_hgp_map /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data/reverse_gapped_peak_histone_closest_2114bp_atac_within_1k_bound.bed \
+    --chrombpnet_wo_bias /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/gm12878_atac_encode/ENCFF142IOR/fold_0/model.chrombpnet_nobias.fold_0.ENCSR637XSC.h5 \
+    --ctrl_scaling_factor 1.0 \
+    --outputlen_neg 1000 \
+    --skip_missing_hist Yes

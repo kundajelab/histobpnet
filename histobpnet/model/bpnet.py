@@ -221,8 +221,10 @@ class BPNet(torch.nn.Module):
             # output shape: (batch_size, 1)
             x_ctl = torch.sum(x_ctl, dim=(1, 2)).unsqueeze(-1)
             ctl = torch.log1p(x_ctl)
-        # x_ctl_hist is of shape (batch_size, num_bins) if histobpnet_v1 else (batch_size, 1)
         if x_ctl_hist is not None:
+            # x_ctl_hist is of shape (batch_size, num_bins) if histobpnet_v1 else (batch_size,)
+            # TODO need to handle histobpnet_v1
+            assert x_ctl_hist.dim() == 1, "x_ctl_hist should be of shape (batch_size,)"
             ctl = x_ctl_hist.unsqueeze(-1)
             # I already pass log1p-ed data (see histobpnet_wrapper_v*), so no need to do it again here
 

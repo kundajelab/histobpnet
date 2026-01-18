@@ -21,9 +21,9 @@ setup(
         "accelerate",
         "matplotlib",
         "enformer_pytorch",
-        "tangermeme",
+        # "tangermeme",
         "polars",
         "pooch",
-        "toolbox @ git+https://github.com/watiss/toolbox.git@main"
+        # "toolbox @ git+https://github.com/watiss/toolbox.git@main"
     ],
 )

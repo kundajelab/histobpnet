@@ -40,10 +40,12 @@ class DataConfig:
         batch_size: int = 64,
         num_workers: int = 16,
         debug: bool = False,
-        deep_shap_type='counts', 
-        deep_shap_batch_size=64, 
-        modisco_max_seqlets=1000_000, 
-        modisco_width=500, 
+        deep_shap_type = 'counts', 
+        deep_shap_batch_size = 32, 
+        deep_shap_n_shuffles = 20, 
+        modisco_meme_file = '/large_storage/goodarzilab/valehvpa/refs/motifs/motifs.meme.txt', 
+        modisco_max_seqlets = 1000_000, 
+        modisco_width = 500, 
         # these are parameters whose default values can vary based on model_type
         shift: int = None,
         rc_frac: float = None,
@@ -100,6 +102,8 @@ class DataConfig:
         self.fold = fold
         self.deep_shap_type = deep_shap_type
         self.deep_shap_batch_size = deep_shap_batch_size
+        self.deep_shap_n_shuffles = deep_shap_n_shuffles
+        self.modisco_meme_file = modisco_meme_file
         self.modisco_max_seqlets = modisco_max_seqlets
         self.modisco_width = modisco_width
 
@@ -162,7 +166,8 @@ class DataConfig:
         }
         
         for name, path in required_files.items():
-            if name not in ['BigWigCtrl', 'ATAC_HGP_MAP']:
+            # we dont always have BigWig (eg interpret)
+            if name not in ['BigWig', 'BigWigCtrl', 'ATAC_HGP_MAP']:
                 if not os.path.exists(path):
                     raise FileNotFoundError(f"{name} file not found: {path}")
             else:

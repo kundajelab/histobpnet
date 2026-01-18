@@ -238,38 +238,38 @@ def predict(args, output_dir: str, checkpoint: str, logger, mode: str='predict',
         save_predictions(output, regions, data_config.chrom_sizes, od, seqlen=model_config.out_dim)
 
 def interpret(args, output_dir: str, checkpoint: str, logger):
-    from histobpnet.interpert.interpret import run_modisco_and_shap 
+    from histobpnet.interpret.interpret import run_modisco_and_shap 
     model = create_model_wrapper(args, checkpoint=args.checkpoint)
 
     data_config = DataConfig.from_argparse_args(
         args,
         extra_kwargs={"output_bins": args.output_bins, "model_type": args.model_type}
     )
-    dm = DataModule(data_config, len(args.gpu))
-    model_config = model.get_model_config()
+    # dm = DataModule(data_config, len(args.gpu))
+    # model_config = model.get_model_config()
 
-    # not sure what this is for
-    # model.to(f'cuda:{args_d["gpu"][0]}')
-
-    basedir = os.path.join(args_d["output_dir"], f'fold_{args.fold}')
+    basedir = os.path.join(output_dir, f'fold_{data_config.fold}')
     tasks = ['profile', 'counts'] if data_config.deep_shap_type == 'both' else [data_config.deep_shap_type]
     for task in tasks:
-        output_dir = os.makedirs(os.path.join(basedir, task), exist_ok=False)
+        task_dir = os.path.join(basedir, task)
+        os.makedirs(task_dir, exist_ok=False)
         run_modisco_and_shap(
             # it s the bpnet model/module inside chrombpnet for example
             # why is bias not included here? -> b/c we want the contribution scores that arise from bias-corrected predictions
             model.model.model,
             data_config.peaks,
-            out_dir=output_dir,
+            out_dir=task_dir,
             in_window=data_config.in_window,
             out_window=data_config.out_window,
             fasta=data_config.fasta,
             chrom_sizes=data_config.chrom_sizes,
             batch_size=data_config.deep_shap_batch_size,
+            n_shuffles = data_config.deep_shap_n_shuffles,
             task=task,
+            meme_file = data_config.modisco_meme_file,
             max_seqlets = data_config.modisco_max_seqlets,
             width = data_config.modisco_width,
-            debug=True,
+            debug=data_config.debug,
         )
 
 def create_model_wrapper(args, checkpoint: str = None, datamodule = None):

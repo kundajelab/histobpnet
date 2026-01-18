@@ -2,9 +2,9 @@
 
 set -euo pipefail
 
-dir=/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/gm12878_atac_encode/ENCFF971WEQ
-out_dir=/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/data
-file_name=peaks.all_input_regions.ENCSR637XSC
+dir=/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/k562_atac_encode/ENCFF991RUK
+out_dir=/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/k562_atac_encode/processed
+file_name=peaks.all_input_regions.ENCSR868FGK
 
 cd "$out_dir"
 
