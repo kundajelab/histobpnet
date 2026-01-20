@@ -214,9 +214,7 @@ def run_modisco_and_shap(
     t1 = "/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/interpretation/instance-20260118_102238/fold_0/counts/ohe.npy"
     t2 = "/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/interpretation/instance-20260118_102238/fold_0/counts/attr.npy"
     print('Running modisco')
-    modisco_path = "/home/valehvpa/.local/bin/modisco"
-    os.system('{} motifs -s {} -a {} -n {} -w {} -o {}'.format(
-        modisco_path,
+    os.system('modisco motifs -s {} -a {} -n {} -w {} -o {}'.format(
         t1,
         t2,
         # os.path.join(out_dir, 'ohe.npy'),  
@@ -231,8 +229,7 @@ def run_modisco_and_shap(
         meme_file = motifs_datasets().fetch("motifs.meme.txt")
 
     print('Generating modisco report')
-    os.system('{} report -i {} -o {} -m {}'.format(
-        modisco_path,
+    os.system('modisco report -i {} -o {} -m {}'.format(
         os.path.join(out_dir, 'modisco.h5'),
         os.path.join(out_dir, 'modisco_report'),
         meme_file
