@@ -26,7 +26,8 @@ class HistoBPNetV2(nn.Module):
             count_output_bias = config.count_output_bias, 
             n_count_outputs=config.n_count_outputs,
             for_histone='histobpnet_v2',
-            use_linear_w_ctrl=config.use_linear_w_ctrl,
+            tf_bpnet_style_ctrl=config.tf_bpnet_style_ctrl,
+            unweighted_ctrl=config.unweighted_ctrl,
         )
 
         self.n_control_tracks = n_cc

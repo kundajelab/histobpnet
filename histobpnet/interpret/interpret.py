@@ -129,96 +129,96 @@ def run_modisco_and_shap(
         sub_sample = 30_000
         max_seqlets = 50_000
 
-    # n_control_tracks = model.n_control_tracks
+    n_control_tracks = model.n_control_tracks
 
-    # # TODO also go through profile later
-    # if task == 'profile':
-    #     model = ProfileWrapper(model)
-    # elif task == 'counts':
-    #     model = CountWrapper(model)
-    # else:
-    #     raise ValueError(f"Task {task} not recognized. Must be 'profile' or 'counts'")
+    # TODO also go through profile later
+    if task == 'profile':
+        model = ProfileWrapper(model)
+    elif task == 'counts':
+        model = CountWrapper(model)
+    else:
+        raise ValueError(f"Task {task} not recognized. Must be 'profile' or 'counts'")
 
-    # regions_df = load_region_df(peaks, chrom_sizes=chrom_sizes, in_window=in_window, is_peak=True)
-    # if sub_sample is not None and len(regions_df) > sub_sample:
-    #     regions_df = regions_df.sample(sub_sample, random_state=42).reset_index(drop=True)
-    # print('Number of peaks:', len(regions_df))
+    regions_df = load_region_df(peaks, chrom_sizes=chrom_sizes, in_window=in_window, is_peak=True)
+    if sub_sample is not None and len(regions_df) > sub_sample:
+        regions_df = regions_df.sample(sub_sample, random_state=42).reset_index(drop=True)
+    print('Number of peaks:', len(regions_df))
 
-    # seq = get_seq(regions_df, pyfaidx.Fasta(fasta), in_window)
-    # if n_control_tracks > 0:
-    #     args = [torch.zeros(seq.shape[0], n_control_tracks, out_window)]
-    # else:
-    #     args = None
+    seq = get_seq(regions_df, pyfaidx.Fasta(fasta), in_window)
+    if n_control_tracks > 0:
+        args = [torch.zeros(seq.shape[0], n_control_tracks, out_window)]
+    else:
+        args = None
 
-    # if isinstance(seq, np.ndarray):
-    #     seq = torch.tensor(seq.astype(np.float32))
-    # if seq.shape[-1] == 4:
-    #     seq = seq.permute(0, 2, 1)
+    if isinstance(seq, np.ndarray):
+        seq = torch.tensor(seq.astype(np.float32))
+    if seq.shape[-1] == 4:
+        seq = seq.permute(0, 2, 1)
 
-    # # Mask those N values encoded as [0.25, 0.25, 0.25, 0.25]
-    # mask = (seq == 0.25).any(dim=(1, 2))
-    # seq = seq[~mask]
-    # regions_df = regions_df[pd.Series(~mask)]
+    # Mask those N values encoded as [0.25, 0.25, 0.25, 0.25]
+    mask = (seq == 0.25).any(dim=(1, 2))
+    seq = seq[~mask]
+    regions_df = regions_df[pd.Series(~mask)]
 
-    # # Mask those sequences that are all 0s
-    # mask = (seq == 0).all(dim=1).any(dim=1)  # Shape: (N, L), True where all 0s in dim=1  
-    # seq = seq[~mask]  # Filter sequences
-    # regions_df = regions_df[pd.Series(~mask)]  # Filter regions
+    # Mask those sequences that are all 0s
+    mask = (seq == 0).all(dim=1).any(dim=1)  # Shape: (N, L), True where all 0s in dim=1  
+    seq = seq[~mask]  # Filter sequences
+    regions_df = regions_df[pd.Series(~mask)]  # Filter regions
 
-    # for i in range(seq.shape[0]):
-    #     try:
-    #         X = _validate_input(seq[i], name='seq', shape=(-1, -1), ohe=True, ohe_dim=0)
-    #     except:
-    #         print(i)
-    #         import pdb; pdb.set_trace()
+    for i in range(seq.shape[0]):
+        try:
+            X = _validate_input(seq[i], name='seq', shape=(-1, -1), ohe=True, ohe_dim=0)
+        except:
+            print(i)
+            import pdb; pdb.set_trace()
 
-    # # Note that by default the output is already projected (ie multiplied by seq) but it
-    # # does not harm to do it again in generate_shap_dict as the seq is one-hot encoded
-    # # so the re-projection/multiplication will efficetively be no-op
-    # attr = deep_lift_shap(model, seq, batch_size=batch_size, n_shuffles=n_shuffles, verbose=True, args=args,
-    #     additional_nonlinear_ops={
-    #         _ProfileLogitScaling: _nonlinear,
-    #         _Log: _nonlinear,
-    #         _Exp: _nonlinear
-    #     },
-    #     warning_threshold=1e8, device=device
-    # )
-    # del model
+    # Note that by default the output is already projected (ie multiplied by seq) but it
+    # does not harm to do it again in generate_shap_dict as the seq is one-hot encoded
+    # so the re-projection/multiplication will efficetively be no-op
+    attr = deep_lift_shap(model, seq, batch_size=batch_size, n_shuffles=n_shuffles, verbose=True, args=args,
+        additional_nonlinear_ops={
+            _ProfileLogitScaling: _nonlinear,
+            _Log: _nonlinear,
+            _Exp: _nonlinear
+        },
+        warning_threshold=1e8, device=device
+    )
+    del model
 
-    # shap_dict = generate_shap_dict(seq, attr)
+    shap_dict = generate_shap_dict(seq, attr)
 
-    # print('Saving shap dict in h5 format')
-    # # np.object = object <- valeh: why?
-    # import deepdish
-    # deepdish.io.save(os.path.join(out_dir, f'shap.h5'), shap_dict, compression='blosc')
-    # np.save(os.path.join(out_dir, 'attr.npy'), attr)
-    # np.save(os.path.join(out_dir, 'ohe.npy'), seq)
+    print('Saving shap dict in h5 format')
+    # np.object = object <- valeh: why?
+    import deepdish
+    deepdish.io.save(os.path.join(out_dir, f'shap.h5'), shap_dict, compression='blosc')
+    np.save(os.path.join(out_dir, 'attr.npy'), attr)
+    np.save(os.path.join(out_dir, 'ohe.npy'), seq)
 
-    # print('Saving peak regions in bed format')
-    # regions_df.to_csv(os.path.join(out_dir, 'peaks.bed'), sep='\t', header=False, index=False)
-    # print('Sorting and indexing peak bed file')
-    # os.system("sort -k1,1 -k2,2n {} > {}".format(os.path.join(out_dir, 'peaks.bed'), os.path.join(out_dir, 'peaks.sorted.bed')))
-    # os.system("bgzip -c {} > {}".format(os.path.join(out_dir, 'peaks.sorted.bed'), os.path.join(out_dir, 'peaks.bed.gz')))
-    # os.system("tabix -p bed {}".format(os.path.join(out_dir, 'peaks.bed.gz')))
+    print('Saving peak regions in bed format')
+    regions_df.to_csv(os.path.join(out_dir, 'peaks.bed'), sep='\t', header=False, index=False)
+    print('Sorting and indexing peak bed file')
+    os.system("sort -k1,1 -k2,2n {} > {}".format(os.path.join(out_dir, 'peaks.bed'), os.path.join(out_dir, 'peaks.sorted.bed')))
+    os.system("bgzip -c {} > {}".format(os.path.join(out_dir, 'peaks.sorted.bed'), os.path.join(out_dir, 'peaks.bed.gz')))
+    os.system("tabix -p bed {}".format(os.path.join(out_dir, 'peaks.bed.gz')))
 
-    # print('Converting shap h5 to bigwig')
-    # hdf5_to_bigwig(
-    #     os.path.join(out_dir, f'shap.h5'),
-    #     os.path.join(out_dir, 'peaks.bed'),
-    #     chrom_sizes,
-    #     output_prefix=os.path.join(out_dir, f'shap'),
-    #     debug_chr=None,
-    #     tqdm=True
-    # )
+    print('Converting shap h5 to bigwig')
+    hdf5_to_bigwig(
+        os.path.join(out_dir, f'shap.h5'),
+        os.path.join(out_dir, 'peaks.bed'),
+        chrom_sizes,
+        output_prefix=os.path.join(out_dir, f'shap'),
+        debug_chr=None,
+        tqdm=True
+    )
 
-    t1 = "/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/interpretation/instance-20260118_102238/fold_0/counts/ohe.npy"
-    t2 = "/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/interpretation/instance-20260118_102238/fold_0/counts/attr.npy"
+    # t1 = "/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/interpretation/instance-20260118_102238/fold_0/counts/ohe.npy"
+    # t2 = "/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/interpretation/instance-20260118_102238/fold_0/counts/attr.npy"
     print('Running modisco')
     os.system('modisco motifs -s {} -a {} -n {} -w {} -o {}'.format(
-        t1,
-        t2,
-        # os.path.join(out_dir, 'ohe.npy'),  
-        # os.path.join(out_dir, 'attr.npy'),
+        # t1,
+        # t2,
+        os.path.join(out_dir, 'ohe.npy'),  
+        os.path.join(out_dir, 'attr.npy'),
         max_seqlets,
         width, 
         os.path.join(out_dir, f'modisco.h5')

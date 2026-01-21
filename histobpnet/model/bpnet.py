@@ -61,7 +61,8 @@ class BPNet(torch.nn.Module):
         verbose: bool = False,
         n_count_outputs: int = 1,
         for_histone: str = None,
-        use_linear_w_ctrl: bool = True, # matches TF bpnet when True
+        tf_bpnet_style_ctrl: bool = True, # matches TF bpnet when True
+        unweighted_ctrl: bool = False,
     ):
         super().__init__()
 
@@ -72,7 +73,8 @@ class BPNet(torch.nn.Module):
         self.n_control_tracks = n_control_tracks
         self.verbose = verbose
         self.for_histone = for_histone
-        self.use_linear_w_ctrl = use_linear_w_ctrl
+        self.tf_bpnet_style_ctrl = tf_bpnet_style_ctrl
+        self.unweighted_ctrl = unweighted_ctrl
 
         self.name = name or "bpnet.{}.{}".format(n_filters, n_layers)
 
@@ -115,7 +117,7 @@ class BPNet(torch.nn.Module):
             n_count_control = n_control_tracks
         # will be used to pool (average) over sequence length
         self.global_avg_pool = torch.nn.AdaptiveAvgPool1d(1)
-        if (n_count_control == 0) or (not use_linear_w_ctrl):
+        if (n_count_control == 0) or (not tf_bpnet_style_ctrl):
             self.linear = torch.nn.Linear(
                     n_filters+n_count_control,
                     n_count_outputs,
@@ -129,11 +131,12 @@ class BPNet(torch.nn.Module):
                 1,
                 bias=count_output_bias
             )
-            self.linear_w_ctrl = torch.nn.Linear(
-                1 + n_count_control,
-                n_count_outputs
-            )
-            
+            if not unweighted_ctrl:
+                self.linear_w_ctrl = torch.nn.Linear(
+                    1 + n_count_control,
+                    n_count_outputs
+                )
+
     def forward(self, x, x_ctl=None, x_ctl_hist=None):
         """A forward pass of the model.
 
@@ -231,11 +234,14 @@ class BPNet(torch.nn.Module):
         if ctl is None:
             pred_count = self.linear(pred_count)
         else:
-            if not self.use_linear_w_ctrl:
+            if not self.tf_bpnet_style_ctrl:
                 pred_count = self.linear(torch.cat([pred_count, ctl], dim=-1))
             else:
                 pred_count = self.linear(pred_count)
-                pred_count = self.linear_w_ctrl(torch.cat([pred_count, ctl], dim=-1))
+                if not self.unweighted_ctrl:
+                    pred_count = self.linear_w_ctrl(torch.cat([pred_count, ctl], dim=-1))
+                else:
+                    pred_count = pred_count + ctl
 
         return pred_count
     
@@ -361,9 +367,9 @@ class BPNet(torch.nn.Module):
             model.fconv.weight = convert_w(w[fname][k])
             model.fconv.bias = convert_b(w[fname][b])
 
-        # TODO for hist models where model.use_linear_w_ctrl is False, do we want to / can
+        # TODO for hist models where model.tf_bpnet_style_ctrl is False, do we want to / can
         # we partially initialize the weights or something?
-        # if (not is_histone(model.for_histone)) or model.use_linear_w_ctrl, init weights
+        # if (not is_histone(model.for_histone)) or model.tf_bpnet_style_ctrl, init weights
         #
         name = namer(prefix, "logcount_predictions")
         incoming = torch.tensor(w[name][k][:]).T
