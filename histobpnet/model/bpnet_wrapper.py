@@ -141,3 +141,7 @@ class ChromBPNetWrapper(BaseBPNetWrapper):
     def save_state_dict(self, save_dir: str):
         print(f"Saving state_dict to {save_dir}...")
         torch.save(self.model.model.state_dict(), os.path.join(save_dir, f'chrombpnet_wo_bias.pt'))
+
+    def get_module_to_interpret(self):
+        print(f"Returning module to interpret...")
+        return self.model.model

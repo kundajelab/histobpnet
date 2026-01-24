@@ -48,13 +48,14 @@ class HistoBPNetWrapperV3(ModelWrapper):
             return {
                 'pred_count': to_numpy(y_count),
                 'true_count': to_numpy(true_logsum),
+                'pred_lfc': to_numpy(y_count) - to_numpy(true_logsum_ctl),
+                'true_lfc': to_numpy(true_logsum) - to_numpy(true_logsum_ctl),
             }
 
         self.metrics[mode]['preds'].append(y_count)
         self.metrics[mode]['targets'].append(true_logsum)
         self.metrics[mode]['peak_status'].append(batch['peak_status'])
 
-        # does mse in log space make sense? that's what bpnet does though (see def _step)
         mse_elements = (y_count - true_logsum) ** 2     # shape: (batch_size, 1)
         count_loss = mse_elements.mean()
         loss = count_loss
@@ -78,3 +79,7 @@ class HistoBPNetWrapperV3(ModelWrapper):
     def save_state_dict(self, save_dir: str):
         print(f"Saving state_dict to {save_dir}...")
         torch.save(self.model.bpnet.state_dict(), os.path.join(save_dir, f'{self.model_type}.pt'))
+
+    def get_module_to_interpret(self):
+        print(f"Returning module to interpret...")
+        return self.model.bpnet

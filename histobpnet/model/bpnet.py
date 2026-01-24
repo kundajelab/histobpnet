@@ -119,10 +119,10 @@ class BPNet(torch.nn.Module):
         self.global_avg_pool = torch.nn.AdaptiveAvgPool1d(1)
         if (n_count_control == 0) or (not tf_bpnet_style_ctrl):
             self.linear = torch.nn.Linear(
-                    n_filters+n_count_control,
-                    n_count_outputs,
-                    bias=count_output_bias
-                )
+                n_filters+n_count_control,
+                n_count_outputs,
+                bias=count_output_bias
+            )
         else:
             # TODO_later should count_output_bias be for the first linear or the second?
             self.linear = torch.nn.Linear(

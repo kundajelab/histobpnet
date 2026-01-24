@@ -114,9 +114,12 @@ class ModelWrapper(LightningModule):
 
         return model
 
-    def save_state_dict():
+    def save_state_dict(self):
         raise NotImplementedError("Subclasses must implement this method")
 
+    def get_module_to_interpret(self):
+        raise NotImplementedError("Subclasses must implement this method")
+    
     def _predict_on_dataloader(self, dataloader, func, **kwargs):
         raise ValueError("Putting this here for now so I know when it's called!")
 

@@ -67,6 +67,9 @@ def load_output_to_regions(output, regions, out_dir: str):
         regions['is_peak'] = regions['is_peak'].astype(int)
     regions['pred_count'] = parsed_output['pred_count']
     regions['true_count'] = parsed_output['true_count']
+    if 'pred_lfc' in parsed_output:
+        regions['pred_lfc'] = parsed_output['pred_lfc']
+        regions['true_lfc'] = parsed_output['true_lfc']
     regions.to_csv(os.path.join(out_dir, 'regions.csv'), sep='\t', index=False)
     return regions, parsed_output
 
@@ -87,6 +90,22 @@ def compare_with_observed(regions, parsed_output, out_dir: str, tag='all_regions
     metrics_dictionary["counts_metrics"]["peaks_and_nonpeaks"]["spearmanr"] = spearman_cor
     metrics_dictionary["counts_metrics"]["peaks_and_nonpeaks"]["pearsonr"] = pearson_cor
     metrics_dictionary["counts_metrics"]["peaks_and_nonpeaks"]["mse"] = mse
+
+    # save lfc metrics if applicable
+    if 'pred_lfc' in regions:
+        metrics_dictionary["lfc_metrics"] = {}
+        spearman_cor, pearson_cor, mse = counts_metrics(
+            regions['true_lfc'],
+            regions['pred_lfc'],
+            os.path.join(out_dir, 'all_regions'),
+            model_wrapper=model_wrapper,
+            wandb_log_name=wandb_log_name,
+            type_ = "lfc",
+        )
+        metrics_dictionary["lfc_metrics"]["peaks_and_nonpeaks"] = {}
+        metrics_dictionary["lfc_metrics"]["peaks_and_nonpeaks"]["spearmanr"] = spearman_cor
+        metrics_dictionary["lfc_metrics"]["peaks_and_nonpeaks"]["pearsonr"] = pearson_cor
+        metrics_dictionary["lfc_metrics"]["peaks_and_nonpeaks"]["mse"] = mse
 
     # save profile metrics (peaks and nonpeaks)
     if not skip_profile:
@@ -119,6 +138,20 @@ def compare_with_observed(regions, parsed_output, out_dir: str, tag='all_regions
         metrics_dictionary["counts_metrics"]["peaks"]["pearsonr"] = pearson_cor
         metrics_dictionary["counts_metrics"]["peaks"]["mse"] = mse
 
+        if 'pred_lfc' in regions:
+            spearman_cor, pearson_cor, mse = counts_metrics(
+                peak_regions['true_lfc'],
+                peak_regions['pred_lfc'],
+                os.path.join(out_dir, 'peaks'),
+                model_wrapper=model_wrapper,
+                wandb_log_name=wandb_log_name,
+                type_ = "lfc",
+            )
+            metrics_dictionary["lfc_metrics"]["peaks"] = {}
+            metrics_dictionary["lfc_metrics"]["peaks"]["spearmanr"] = spearman_cor
+            metrics_dictionary["lfc_metrics"]["peaks"]["pearsonr"] = pearson_cor
+            metrics_dictionary["lfc_metrics"]["peaks"]["mse"] = mse
+
         if not skip_profile:
             jsd_pw, jsd_norm, jsd_rnd, _ = profile_metrics(
                 parsed_output['true_profile'][peak_index],
@@ -147,6 +180,20 @@ def compare_with_observed(regions, parsed_output, out_dir: str, tag='all_regions
         metrics_dictionary["counts_metrics"]["nonpeaks"]["pearsonr"] = pearson_cor
         metrics_dictionary["counts_metrics"]["nonpeaks"]["mse"] = mse
 
+        if 'pred_lfc' in regions:
+            spearman_cor, pearson_cor, mse = counts_metrics(
+                nonpeak_regions['true_lfc'],
+                nonpeak_regions['pred_lfc'],
+                os.path.join(out_dir, 'nonpeaks'),
+                model_wrapper=model_wrapper,
+                wandb_log_name=wandb_log_name,
+                type_ = "lfc",
+            )
+            metrics_dictionary["lfc_metrics"]["nonpeaks"] = {}
+            metrics_dictionary["lfc_metrics"]["nonpeaks"]["spearmanr"] = spearman_cor
+            metrics_dictionary["lfc_metrics"]["nonpeaks"]["pearsonr"] = pearson_cor
+            metrics_dictionary["lfc_metrics"]["nonpeaks"]["mse"] = mse
+        
         if not skip_profile:
             jsd_pw, jsd_norm, jsd_rnd, _ = profile_metrics(
                 parsed_output['true_profile'][nonpeak_index],
@@ -168,11 +215,19 @@ def counts_metrics(
     preds,
     outf: str = None,
     fontsize = 20,
-    xlab = 'Log Count Labels',
-    ylab = 'Log Count Predictions',
+    xlab: str = None,
+    ylab: str = None,
     model_wrapper=None,
     wandb_log_name: str = None,
+    type_: str = 'counts',
 ):
+    assert type_ in ['counts', 'lfc'], "type_ must be 'counts' or 'lfc'"
+    
+    if xlab is None:
+        xlab = 'Log Count Labels' if type_ == 'counts' else 'LFC Labels'
+    if ylab is None:
+        ylab = 'Log Count Predictions' if type_ == 'counts' else 'LFC Predictions'
+
     spearman_cor = spearmanr(labels, preds)[0]
     pearson_cor = pearsonr(labels, preds)[0]  
     mse=((labels - preds)**2).mean(axis=0)
@@ -193,9 +248,9 @@ def counts_metrics(
     )
     # plt.legend(loc='best')
 
-    filepath = outf+'.counts_pearsonr.png' if outf is not None else None
+    filepath = outf+f'.{type_}_pearsonr.png' if outf is not None else None
     if outf is not None:
-        plt.savefig(outf+'.counts_pearsonr.png',format='png',dpi=300)
+        plt.savefig(outf+f'.{type_}_pearsonr.png',format='png',dpi=300)
     
         if wandb_log_name is not None:
             assert model_wrapper is not None, "model_wrapper must be provided when wandb_log_name is not None"

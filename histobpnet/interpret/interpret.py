@@ -14,6 +14,7 @@ from histobpnet.utils.data_utils import (
     hdf5_to_bigwig,
     html_to_pdf,
 )
+from histobpnet.utils.general_utils import is_histone
 
 class _Exp(torch.nn.Module):
     def __init__(self):
@@ -110,6 +111,7 @@ def run_modisco_and_shap(
     model,
     peaks,
     out_dir,
+    model_type: str,
     in_window: str, 
     out_window: str,
     fasta: str,
@@ -122,7 +124,9 @@ def run_modisco_and_shap(
     max_seqlets = 1000_000, 
     width = 500, 
     device = 'cuda',
-    debug = False
+    debug = False,
+    skip_missing_hist: str="N/A",
+    atac_hgp_map:str = "",
 ):
     print("DeepLiftShap and modisco output directory: ", out_dir)
     if debug:
@@ -139,14 +143,25 @@ def run_modisco_and_shap(
     else:
         raise ValueError(f"Task {task} not recognized. Must be 'profile' or 'counts'")
 
-    regions_df = load_region_df(peaks, chrom_sizes=chrom_sizes, in_window=in_window, is_peak=True)
+    regions_df = load_region_df(peaks, chrom_sizes=chrom_sizes, in_window=in_window, is_peak=True,
+        skip_missing_hist=skip_missing_hist,
+        atac_hgp_map=atac_hgp_map,
+    )
     if sub_sample is not None and len(regions_df) > sub_sample:
         regions_df = regions_df.sample(sub_sample, random_state=42).reset_index(drop=True)
     print('Number of peaks:', len(regions_df))
 
     seq = get_seq(regions_df, pyfaidx.Fasta(fasta), in_window)
     if n_control_tracks > 0:
-        args = [torch.zeros(seq.shape[0], n_control_tracks, out_window)]
+        if is_histone(model_type):
+            args = [
+                None, # x_ctl
+                torch.zeros(seq.shape[0], 1) # x_ctl_hist
+            ]
+        else:
+            args = [
+                torch.zeros(seq.shape[0], n_control_tracks, out_window) # x_ctl
+            ]
     else:
         args = None
 
@@ -174,7 +189,7 @@ def run_modisco_and_shap(
 
     # Note that by default the output is already projected (ie multiplied by seq) but it
     # does not harm to do it again in generate_shap_dict as the seq is one-hot encoded
-    # so the re-projection/multiplication will efficetively be no-op
+    # so the re-projection/multiplication will effectively be no-op
     attr = deep_lift_shap(model, seq, batch_size=batch_size, n_shuffles=n_shuffles, verbose=True, args=args,
         additional_nonlinear_ops={
             _ProfileLogitScaling: _nonlinear,
@@ -188,7 +203,6 @@ def run_modisco_and_shap(
     shap_dict = generate_shap_dict(seq, attr)
 
     print('Saving shap dict in h5 format')
-    # np.object = object <- valeh: why?
     import deepdish
     deepdish.io.save(os.path.join(out_dir, f'shap.h5'), shap_dict, compression='blosc')
     np.save(os.path.join(out_dir, 'attr.npy'), attr)

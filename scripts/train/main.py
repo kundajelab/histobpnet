@@ -199,23 +199,6 @@ def predict(args, output_dir: str, checkpoint: str, logger, mode: str='predict',
     trainer = L.Trainer(logger=L.pytorch.loggers.WandbLogger(save_dir=pt_output_dir),
                         accelerator='gpu', fast_dev_run=args.fast_dev_run, devices=args.gpu, val_check_interval=None)
 
-    # TODO_later log these
-    # print("accelerator:", trainer.accelerator)              # object, e.g. GPUAccelerator(...)
-    # print("accelerator type:", trainer.accelerator.__class__.__name__)  # "GPUAccelerator", "CPUAccelerator", ...
-    #
-    # print("strategy:", trainer.strategy)                    # e.g. DDPStrategy(...)
-    # print("strategy name:", trainer.strategy.__class__.__name__)
-    #
-    # print("num devices:", trainer.num_devices)              # int, e.g. 1, 2, 8
-    # print("devices:", trainer.device_ids)                   # list of device indices, e.g. [0], [0, 1, 2, 3]
-    #
-    # print("global rank:", trainer.global_rank)              # 0 in single-process, 0..world_size-1 in DDP
-    # print("local rank:", trainer.local_rank)                # rank within the node
-    # print("world size:", trainer.world_size)                # total number of processes
-    #
-    # print("fast_dev_run:", trainer.fast_dev_run)            # True / False / int
-    # print("max_epochs:", trainer.max_epochs)
-
     data_config = DataConfig.from_argparse_args(
         args,
         extra_kwargs={"output_bins": args.output_bins, "model_type": args.model_type}
@@ -246,7 +229,7 @@ def interpret(args, output_dir: str, checkpoint: str, logger):
         extra_kwargs={"output_bins": args.output_bins, "model_type": args.model_type}
     )
     # dm = DataModule(data_config, len(args.gpu))
-    # model_config = model.get_model_config()
+    model_config = model.get_model_config()
 
     basedir = os.path.join(output_dir, f'fold_{data_config.fold}')
     tasks = ['profile', 'counts'] if data_config.deep_shap_type == 'both' else [data_config.deep_shap_type]
@@ -256,9 +239,10 @@ def interpret(args, output_dir: str, checkpoint: str, logger):
         run_modisco_and_shap(
             # it s the bpnet model/module inside chrombpnet for example
             # why is bias not included here? -> b/c we want the contribution scores that arise from bias-corrected predictions
-            model.model.model,
+            model.get_module_to_interpret(),
             data_config.peaks,
-            out_dir=task_dir,
+            task_dir,
+            model.model_type,
             in_window=data_config.in_window,
             out_window=data_config.out_window,
             fasta=data_config.fasta,
@@ -270,6 +254,8 @@ def interpret(args, output_dir: str, checkpoint: str, logger):
             max_seqlets = data_config.modisco_max_seqlets,
             width = data_config.modisco_width,
             debug=data_config.debug,
+            skip_missing_hist=model_config.skip_missing_hist,
+            atac_hgp_map=model_config.atac_hgp_map,
         )
 
 def create_model_wrapper(args, checkpoint: str = None, datamodule = None):
