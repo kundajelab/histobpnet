@@ -40,12 +40,14 @@ class DataConfig:
         batch_size: int = 64,
         num_workers: int = 16,
         debug: bool = False,
-        deep_shap_type = 'counts', 
-        deep_shap_batch_size = 32, 
-        deep_shap_n_shuffles = 20, 
-        modisco_meme_file = '/large_storage/goodarzilab/valehvpa/refs/motifs/motifs.meme.txt', 
-        modisco_max_seqlets = 1000_000, 
-        modisco_width = 500, 
+        deep_shap_type: str = 'counts', 
+        deep_shap_batch_size: int = 32, 
+        deep_shap_n_shuffles: int = 20, 
+        # modisco_meme_file: str = '/large_storage/goodarzilab/valehvpa/refs/motifs/motifs.meme.txt', 
+        modisco_meme_file: str = '/large_storage/goodarzilab/valehvpa/refs/motifs/MotifCompendium-Database-Human.meme.txt', 
+        modisco_max_seqlets: int = 1000_000, 
+        modisco_width: int = 500, 
+        modisco_skip_modisco: bool = False,
         # these are parameters whose default values can vary based on model_type
         shift: int = None,
         rc_frac: float = None,
@@ -106,6 +108,7 @@ class DataConfig:
         self.modisco_meme_file = modisco_meme_file
         self.modisco_max_seqlets = modisco_max_seqlets
         self.modisco_width = modisco_width
+        self.modisco_skip_modisco = modisco_skip_modisco
 
         if self.shift is None:
             if self.model_type == "chrombpnet":

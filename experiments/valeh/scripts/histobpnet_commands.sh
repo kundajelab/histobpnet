@@ -911,9 +911,38 @@ python /home/valehvpa/projects/scCisTrans/histobpnet/scripts/train/main.py \
     --name hv2_interpret \
     --model_type histobpnet_v2 \
     --cvd 0 \
-    --output_dir /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/interpretation \
+    --output_dir /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/interpret \
+    --checkpoint /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/train/instance-20260124_133620/pt_artifacts/best_model.ckpt \
+    --peaks /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/gm12878_atac_encode/ENCFF971WEQ/peaks.all_input_regions.ENCSR637XSC.bed.gz \
+    --skip_wandb \
+    --debug \
+    --modisco_skip_modisco \
+    --unweighted_ctrl
+
+# hv2 from scratch (not finetuned)
+python /home/valehvpa/projects/scCisTrans/histobpnet/scripts/train/main.py \
+    --command interpret \
+    --name hv2_interpret \
+    --model_type histobpnet_v2 \
+    --cvd 0 \
+    --output_dir /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/interpret \
+    --checkpoint /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/train/instance-20260124_134308/pt_artifacts/best_model.ckpt \
+    --peaks /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/gm12878_atac_encode/ENCFF971WEQ/peaks.all_input_regions.ENCSR637XSC.bed.gz \
+    --skip_wandb \
+    --debug \
+    --unweighted_ctrl
+
+########################################
+
+# interpret with chrombpnet gm12878 atac but with the peaks above
+python /home/valehvpa/projects/scCisTrans/histobpnet/scripts/train/main.py \
+    --command interpret \
+    --name chrombpnet_gm12878_interpret \
+    --model_type chrombpnet \
+    --cvd 0 \
+    --output_dir /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/interpretation \
     --peaks /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/gm12878_atac_encode/ENCFF971WEQ/peaks.all_input_regions.ENCSR637XSC.bed.gz \
     --chrombpnet_wo_bias /large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/gm12878_atac_encode/ENCFF142IOR/fold_0/model.chrombpnet_nobias.fold_0.ENCSR637XSC.h5 \
     --skip_wandb \
-    --debug
-
+    --debug \
+    --modisco_skip_modisco

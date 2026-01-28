@@ -13,6 +13,7 @@ from histobpnet.utils.data_utils import (
     load_region_df,
     hdf5_to_bigwig,
     html_to_pdf,
+    read_chrom_sizes,
 )
 from histobpnet.utils.general_utils import is_histone
 
@@ -103,9 +104,11 @@ class CountWrapper(torch.nn.Module):
         super(CountWrapper, self).__init__()
         self.model = model
 
-    # TODO fix for histobpnet models...
-    def forward(self, x, x_ctl=None, **kwargs):
-        return self.model(x, x_ctl=x_ctl, **kwargs)[1]
+    def forward(self, x, x_ctl=None, x_ctl_hist=None, **kwargs):
+        # print(f"CountWrapper forward: x shape {x.shape}, \
+        #     x_ctl shape {None if x_ctl is None else x_ctl.shape}, \
+        #     x_ctl_hist shape {None if x_ctl_hist is None else x_ctl_hist.shape}")
+        return self.model(x, x_ctl=x_ctl, x_ctl_hist=x_ctl_hist, **kwargs)[1]
 
 def run_modisco_and_shap(
     model,
@@ -127,6 +130,8 @@ def run_modisco_and_shap(
     debug = False,
     skip_missing_hist: str="N/A",
     atac_hgp_map:str = "",
+    skip_modisco: bool = False,
+    seed: int = 42,
 ):
     print("DeepLiftShap and modisco output directory: ", out_dir)
     if debug:
@@ -143,12 +148,14 @@ def run_modisco_and_shap(
     else:
         raise ValueError(f"Task {task} not recognized. Must be 'profile' or 'counts'")
 
+    chrom_sizes = read_chrom_sizes(chrom_sizes)
     regions_df = load_region_df(peaks, chrom_sizes=chrom_sizes, in_window=in_window, is_peak=True,
         skip_missing_hist=skip_missing_hist,
         atac_hgp_map=atac_hgp_map,
     )
     if sub_sample is not None and len(regions_df) > sub_sample:
-        regions_df = regions_df.sample(sub_sample, random_state=42).reset_index(drop=True)
+        print(f'Subsampling {sub_sample} regions from {len(regions_df)} using seed {seed}')
+        regions_df = regions_df.sample(sub_sample, random_state=seed).reset_index(drop=True)
     print('Number of peaks:', len(regions_df))
 
     seq = get_seq(regions_df, pyfaidx.Fasta(fasta), in_window)
@@ -156,7 +163,7 @@ def run_modisco_and_shap(
         if is_histone(model_type):
             args = [
                 None, # x_ctl
-                torch.zeros(seq.shape[0], 1) # x_ctl_hist
+                torch.zeros(seq.shape[0]) # x_ctl_hist
             ]
         else:
             args = [
@@ -221,39 +228,42 @@ def run_modisco_and_shap(
         os.path.join(out_dir, 'peaks.bed'),
         chrom_sizes,
         output_prefix=os.path.join(out_dir, f'shap'),
-        debug_chr=None,
-        tqdm=True
+        tqdm=True,
+        h5_read_tool='h5py',
     )
 
-    # t1 = "/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/interpretation/instance-20260118_102238/fold_0/counts/ohe.npy"
-    # t2 = "/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_chrombpnet_tuto/interpretation/instance-20260118_102238/fold_0/counts/attr.npy"
-    print('Running modisco')
-    os.system('modisco motifs -s {} -a {} -n {} -w {} -o {}'.format(
-        # t1,
-        # t2,
-        os.path.join(out_dir, 'ohe.npy'),  
-        os.path.join(out_dir, 'attr.npy'),
-        max_seqlets,
-        width, 
-        os.path.join(out_dir, f'modisco.h5')
-    ))
+    if not skip_modisco:
+        print('Running modisco')
+        # t = "/large_storage/goodarzilab/valehvpa/data/projects/scCisTrans/for_hist/histobpnet_v2/interpret/instance-20260125_171333/fold_0/counts"
+        os.system('modisco motifs -s {} -a {} -n {} -w {} -o {}'.format(
+            os.path.join(out_dir, 'ohe.npy'),  
+            os.path.join(out_dir, 'attr.npy'),
+            # os.path.join(t, 'ohe.npy'),
+            # os.path.join(t, 'attr.npy'),
+            max_seqlets,
+            width, 
+            os.path.join(out_dir, f'modisco.h5')
+            # os.path.join(t, f'modisco.h5')
+        ))
 
-    if meme_file is None:
-        from histobpnet.data_loader.genome import motifs_datasets
-        meme_file = motifs_datasets().fetch("motifs.meme.txt")
+        if meme_file is None:
+            from histobpnet.data_loader.genome import motifs_datasets
+            meme_file = motifs_datasets().fetch("motifs.meme.txt")
 
-    print('Generating modisco report')
-    os.system('modisco report -i {} -o {} -m {}'.format(
-        os.path.join(out_dir, 'modisco.h5'),
-        os.path.join(out_dir, 'modisco_report'),
-        meme_file
-    ))
+        print('Generating modisco report')
+        os.system('modisco report -i {} -o {} -m {}'.format(
+            os.path.join(out_dir, 'modisco.h5'),
+            os.path.join(out_dir, 'modisco_report'),
+            # os.path.join(t, 'modisco.h5'),
+            # os.path.join(t, 'modisco_report'),
+            meme_file
+        ))
 
-    print('Converting modisco html report to pdf')
-    html_to_pdf(
-        os.path.join(out_dir, 'modisco_report/motifs.html'),
-        os.path.join(out_dir, 'modisco_report.pdf')
-    )
+        print('Converting modisco html report to pdf')
+        html_to_pdf(
+            os.path.join(out_dir, 'modisco_report/report.html'),
+            os.path.join(out_dir, 'modisco_report.pdf')
+        )
 
 def generate_shap_dict(seqs, scores):
     if isinstance(seqs, torch.Tensor):

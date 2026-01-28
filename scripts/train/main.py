@@ -220,7 +220,7 @@ def predict(args, output_dir: str, checkpoint: str, logger, mode: str='predict',
     if not skip_profile:
         save_predictions(output, regions, data_config.chrom_sizes, od, seqlen=model_config.out_dim)
 
-def interpret(args, output_dir: str, checkpoint: str, logger):
+def interpret(args, output_dir: str, checkpoint: str, logger, seed: int):
     from histobpnet.interpret.interpret import run_modisco_and_shap 
     model = create_model_wrapper(args, checkpoint=args.checkpoint)
 
@@ -254,8 +254,10 @@ def interpret(args, output_dir: str, checkpoint: str, logger):
             max_seqlets = data_config.modisco_max_seqlets,
             width = data_config.modisco_width,
             debug=data_config.debug,
-            skip_missing_hist=model_config.skip_missing_hist,
-            atac_hgp_map=model_config.atac_hgp_map,
+            skip_missing_hist=data_config.skip_missing_hist,
+            atac_hgp_map=data_config.atac_hgp_map,
+            skip_modisco=data_config.modisco_skip_modisco,
+            seed=seed,
         )
 
 def create_model_wrapper(args, checkpoint: str = None, datamodule = None):
@@ -294,8 +296,10 @@ def create_model_wrapper(args, checkpoint: str = None, datamodule = None):
 
     return model_wrapper
 
-def main(instance_id: str):
+def main(instance_id: str, seed: int):
     args, output_dir, logger = setup(instance_id)
+
+    logger.add_to_log(f"Using randrom seed {seed}")
 
     if args.command == 'train':
         best_model_ckpt = train(args, output_dir, logger)
@@ -303,7 +307,7 @@ def main(instance_id: str):
     elif args.command == 'predict':
         predict(args, output_dir, args.checkpoint, logger)
     elif args.command == 'interpret':
-        interpret(args, output_dir, args.checkpoint, logger)
+        interpret(args, output_dir, args.checkpoint, logger, seed)
     else:
         raise ValueError(f"Unknown command: {args.command}")
 
@@ -314,9 +318,10 @@ if __name__ == '__main__':
     instance_id = get_instance_id()
     print(f"*** Using instance_id: {instance_id}")
 
-    set_random_seed(seed=42, skip_tf=True)
+    rand_seed = 42
+    set_random_seed(seed=rand_seed, skip_tf=True)
     # L.seed_everything(1234)
     t0 = time.time()
-    logger = main(instance_id)
+    logger = main(instance_id, rand_seed)
     tt = time.time() - t0
     logger.add_to_log(f"All done! Time taken: {tt//3600:.0f} hrs, {(tt%3600)//60:.0f} mins, {tt%60:.1f} secs")

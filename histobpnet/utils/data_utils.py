@@ -546,6 +546,7 @@ def get_regions(regions_file, seqlen, regions_used = None, regions_format: str =
     return regions_out
 
 def load_h5_and_sum(hdf5: str, key: str, chunk_n: int = 256):
+    import hdf5plugin  # registers blosc/zstd/lz4 filters with h5py
     import h5py
     with h5py.File(hdf5, "r") as f:
         ds = f[key]
